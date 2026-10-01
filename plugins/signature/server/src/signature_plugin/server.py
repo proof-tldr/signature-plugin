@@ -30,7 +30,6 @@ from signature_plugin.backend import (
 from signature_plugin.local_data import QueryRefused
 from signature_plugin.pages import Page, Pages, Refusal
 from signature_plugin.progress import ProgressStore
-from signature_plugin.review import review_of
 from signature_plugin.settings import NotConfigured, from_environment
 from signature_plugin.sources import DatabaseSource, FileSource, Source, SourceRefused, Sources
 
@@ -225,7 +224,7 @@ async def connect_database(
     outcome = await _decision_on_page(
         ctx,
         'connect',
-        lambda pages: pages.show('connect.html', {'suggested_name': suggested_name}, connected_from),
+        lambda pages: pages.show({'page': 'connect', 'suggestedName': suggested_name}, connected_from),
         'Connect your database to Signature. The password stays on this computer.',
     )
     if not isinstance(outcome, Decided):
@@ -340,8 +339,8 @@ async def review(ctx: Context[PluginState]) -> Reviewed | NotDecided | InputRequ
 
         async def review_page(pages: Pages) -> Page[ReviewDecision]:
             domain = await signature.domain()
-            context = {'domain_name': domain.name, 'review': review_of(await signature.model_snapshot())}
-            return await pages.show('review.html', context, _review_decision)
+            data = {'page': 'review', 'domain': domain.name, 'snapshot': await signature.model_snapshot()}
+            return await pages.show(data, _review_decision)
 
         outcome = await _decision_on_page(
             ctx, 'review', review_page, 'Review what Signature understood, then publish it or say what is wrong.'

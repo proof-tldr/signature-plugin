@@ -1,0 +1,90 @@
+@import 'tailwindcss';
+@import '@xyflow/react/dist/style.css' layer(base);
+@import '@fontsource-variable/source-serif-4';
+@import '@fontsource-variable/ibm-plex-sans';
+
+:root {
+  --paper: #fcfcfd;
+  --ink: #1d2433;
+  --muted: #5f6b7d;
+  --line: #e2e6ec;
+  --canvas: #eef1f6;
+  --signature: #2346d1;
+  --signature-wash: #e8edfc;
+  --signature-ink: #ffffff;
+  --flag: #b42318;
+  --flag-wash: #fdecea;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --paper: #131821;
+    --ink: #e7eaf0;
+    --muted: #9aa4b4;
+    --line: #2a3240;
+    --canvas: #0e1219;
+    --signature: #86a4ff;
+    --signature-wash: #1c2645;
+    --signature-ink: #0d1530;
+    --flag: #f19a8b;
+    --flag-wash: #351c18;
+  }
+}
+
+@theme inline {
+  --color-paper: var(--paper);
+  --color-ink: var(--ink);
+  --color-muted: var(--muted);
+  --color-line: var(--line);
+  --color-canvas: var(--canvas);
+  --color-signature: var(--signature);
+  --color-signature-wash: var(--signature-wash);
+  --color-signature-ink: var(--signature-ink);
+  --color-flag: var(--flag);
+  --color-flag-wash: var(--flag-wash);
+  --font-serif: 'Source Serif 4 Variable', Charter, Georgia, serif;
+  --font-sans: 'IBM Plex Sans Variable', -apple-system, 'Segoe UI', system-ui, sans-serif;
+}
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    touch-action: manipulation;
+  }
+  :focus-visible {
+    outline: 2px solid var(--signature);
+    outline-offset: 2px;
+  }
+}
+
+/* The map is read, not edited: React Flow's defaults are reset to the page's ink and lines. */
+.react-flow {
+  --xy-background-color: var(--canvas);
+  --xy-edge-stroke-default: var(--muted);
+  --xy-edge-stroke-width-default: 1.25;
+  --xy-edge-label-background-color-default: var(--canvas);
+  --xy-edge-label-color-default: var(--signature);
+  --xy-attribution-background-color-default: transparent;
+}
+.react-flow__node {
+  cursor: default;
+}
+.react-flow__handle {
+  opacity: 0;
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition: none !important;
+    animation: none !important;
+  }
+}

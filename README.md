@@ -35,6 +35,7 @@ See [docs/setup-ux.md](docs/setup-ux.md) for the experience and [docs/vision.md]
 | `plugins/signature/hooks/hooks.json` | Shows each answer to you after `ask_question` |
 | `plugins/signature/skills/setup/SKILL.md` | `/signature:setup`, the setup flow Claude follows |
 | `plugins/signature/server/` | The MCP server, a Python package (below) |
+| `plugins/signature/web/` | The browser pages: a React app (Vite, Tailwind, React Flow with ELK for the map) built into the server package |
 | `docs/backend-contract.md` | Every Signature API operation the plugin uses, and which are not built yet |
 
 In `plugins/signature/server/src/signature_plugin/`:
@@ -46,13 +47,24 @@ In `plugins/signature/server/src/signature_plugin/`:
 | `sources.py` | Which files and databases the customer added; passwords in the keychain |
 | `progress.py` | The build, conversation and question numbers the server remembers, so Claude never handles Signature's ids |
 | `local_data.py` | Opens every source in one locked, read-only DuckDB; reports structure; runs Signature's SQL |
-| `pages.py`, `templates/`, `review.py` | The local browser pages for connecting a database and reviewing the domain, the review drawn from Signature's model snapshot |
+| `pages.py`, `web/` | Serves the built web app on 127.0.0.1, with each page's data and the customer's decision as JSON |
 | `handoff.py`, `show_answer.py`, `presentation.py` | Getting an answer to the customer without it reaching Claude |
 | `fake_backend.py` | A stand-in Signature implementing the contract, for development and rehearsal |
 
 ## Development
 
-From `plugins/signature/server`:
+The browser pages, from `plugins/signature/web`:
+
+```sh
+npm install
+npm run dev        # the pages with a sample domain at http://localhost:5173 (?page=connect for the other)
+npm test           # browser tests, in the Chrome on this machine
+npm run build      # type-checks, then builds into ../server/src/signature_plugin/web, which is committed
+```
+
+Rebuild after changing the pages: the plugin ships the built files, so customers never run npm.
+
+The server, from `plugins/signature/server`:
 
 ```sh
 uv sync

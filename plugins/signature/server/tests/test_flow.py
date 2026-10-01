@@ -28,12 +28,12 @@ async def called(client: Client, tool: str, arguments: dict[str, Any] | None = N
 
 
 async def submitted(opened: list[str], form: dict[str, str]) -> httpx2.Response:
-    """The form posted to the page the plugin opened last, once it has opened one."""
+    """The decision the page the plugin opened last sends back, once it has opened one."""
     with anyio.fail_after(30):
         while not opened:
             await anyio.sleep(0.02)
     async with httpx2.AsyncClient() as browser:
-        return await browser.post(opened[-1], data=form)
+        return await browser.post(f'{opened[-1]}/decision', json=form)
 
 
 async def called_through_page(client: Client, tool: str, opened: list[str], *forms: dict[str, str]) -> Any:

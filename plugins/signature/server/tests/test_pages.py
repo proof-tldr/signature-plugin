@@ -12,7 +12,7 @@ async def accept_anything(form: dict[str, str]) -> dict[str, str] | Refusal:
 
 async def test_a_page_answers_only_requests_addressed_to_127_0_0_1(opened_pages: list[str]) -> None:
     pages = Pages()
-    page = await pages.show('done.html', {}, accept_anything)
+    page = await pages.show({'page': 'review'}, accept_anything)
     origin, token, page_id = page.address.rsplit('/', 2)
     port = origin.rsplit(':', 1)[1]
     async with httpx2.AsyncClient() as browser:
@@ -23,3 +23,20 @@ async def test_a_page_answers_only_requests_addressed_to_127_0_0_1(opened_pages:
     assert rebound.status_code == 404
     assert wrong_token.status_code == 404
     assert opened_pages == []
+
+
+async def test_the_page_serves_the_app_its_data_and_takes_a_decision(opened_pages: list[str]) -> None:
+    pages = Pages()
+    page = await pages.show({'page': 'review', 'domain': 'Acme'}, accept_anything)
+    async with httpx2.AsyncClient() as browser:
+        app = await browser.get(page.address)
+        data = await browser.get(f'{page.address}/data')
+        decided = await browser.post(f'{page.address}/decision', json={'decision': 'publish'})
+        again = await browser.post(f'{page.address}/decision', json={'decision': 'publish'})
+        escape = await browser.get(page.address.rsplit('/', 1)[0] + '/assets/../../pages.py')
+    assert '<div id="root">' in app.text
+    assert data.json() == {'page': 'review', 'domain': 'Acme'}
+    assert decided.json() == {'done': True}
+    assert await page.decided == {'decision': 'publish'}
+    assert again.status_code == 404
+    assert escape.status_code == 404
