@@ -68,16 +68,10 @@ export function ReviewPage({ domain, snapshot }: ReviewPageProps) {
         <h1 className="font-serif text-[2.1rem] leading-tight text-balance sm:text-[2.5rem]">
           Check what Signature understood about {domain}
         </h1>
-        <p className="mt-4 max-w-[38rem] text-lg leading-relaxed text-muted">
-          Signature read your data and documents. Go through each part below and mark it{' '}
-          <span className="text-ink">Looks right</span>, or <span className="text-ink">Not quite</span> if something
-          is off. When it all looks right, publish it.
-        </p>
 
         {understanding.connections.length > 0 ? (
           <Part
             title="How your business fits together"
-            intro="These are the things Signature found and how they relate. Pick one to read about it below."
           >
             <div className="mt-2 h-64 overflow-hidden rounded-lg bg-canvas">
               <ConnectionsDiagram understanding={understanding} selected={selected} onSelect={setSelected} />
@@ -91,7 +85,7 @@ export function ReviewPage({ domain, snapshot }: ReviewPageProps) {
           </Part>
         ) : null}
 
-        <Part title="Each thing in detail" intro="What each one is, and what Signature keeps track of for it.">
+        <Part title="Each thing in detail">
           {understanding.things.map((thing) => (
             <ThingEntry
               key={thing.id}
@@ -104,7 +98,7 @@ export function ReviewPage({ domain, snapshot }: ReviewPageProps) {
         </Part>
 
         {understanding.calculations.length > 0 ? (
-          <Part title="What you can ask about" intro="Signature can work these out for you.">
+          <Part title="What you can ask about">
             {understanding.calculations.map((calculation) => (
               <Entry key={calculation.id}>
                 <h3 className="font-serif text-[1.5rem] leading-tight text-balance">{calculation.name}</h3>
@@ -124,7 +118,6 @@ export function ReviewPage({ domain, snapshot }: ReviewPageProps) {
         {understanding.assumptions.length > 0 ? (
           <Part
             title="What Signature assumes is always true"
-            intro="Signature relies on these whenever it answers. If one is not always true, mark it Not quite."
           >
             {understanding.assumptions.map((assumption, index) => {
               const item = { key: `assumption-${index}`, subject: assumption }
@@ -204,11 +197,10 @@ function itemsOf(understanding: Understanding): Item[] {
   ]
 }
 
-function Part({ title, intro, children }: { title: string; intro: string; children: React.ReactNode }) {
+function Part({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <section className="mt-16">
-      <h2 className="font-serif text-[1.75rem] leading-tight text-balance">{title}</h2>
-      <p className="mt-1 mb-4 text-[15px] text-muted">{intro}</p>
+      <h2 className="mb-4 font-serif text-[1.75rem] leading-tight text-balance">{title}</h2>
       {children}
     </section>
   )
