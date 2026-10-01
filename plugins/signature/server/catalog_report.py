@@ -1,5 +1,6 @@
-"""A Postgres database's structure, as the rows its catalog yields, shaped into the request Signature takes. Pure:
-what is read and where it is sent are not this module's concern, and no row of data ever enters it."""
+"""A source's structure (a Postgres catalog's rows, or the columns DuckDB found in files), shaped into the request
+Signature takes. Pure: what is read and where it is sent are not this module's concern, and no row of data ever
+enters it."""
 
 from collections import defaultdict
 from dataclasses import dataclass
@@ -38,5 +39,26 @@ def postgresql_database(rows: PostgresqlCatalogRows) -> Row:
             'catalog': {'schemas': [{'name': name, 'relations': relations} for name, relations in schemas.items()]}}
 
 
-def table_count(database: Row) -> int:
-    return sum(len(schema['relations']) for schema in database['catalog']['schemas'])
+@dataclass(frozen=True)
+class FileColumn:
+    """One column DuckDB found in a file, its type as DuckDB's `DESCRIBE` printed it."""
+    name: str
+    duckdb_type: str
+    nullable: bool
+
+
+@dataclass(frozen=True)
+class FileStructure:
+    """What DuckDB found in one file: the name it is reported under and its columns in order."""
+    name: str
+    columns: list[FileColumn]
+
+
+def files_database(files: list[FileStructure]) -> Row:
+    """The `database` of a reported source: each file with its columns, types exactly as DuckDB printed them. Which
+    types Signature knows is the backend's decision; one it does not know is refused there, naming the column."""
+    return {'adapter': 'files', 'catalog': {'files': [
+        {'name': file.name,
+         'columns': [{'name': column.name, 'nativeType': column.duckdb_type, 'nullable': column.nullable}
+                     for column in file.columns]}
+        for file in files]}}

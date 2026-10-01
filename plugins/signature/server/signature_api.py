@@ -1,5 +1,5 @@
-"""Signature's REST API as this machine reaches it, with the member's API key: the workspace's domains, and a
-question asked and followed to its outcome."""
+"""Signature's REST API as this machine reaches it, with the member's API key: the workspace's domains, questions
+asked and followed to their outcome, documents handed over, domains built, and local sources reported."""
 
 import asyncio
 import base64
@@ -64,7 +64,7 @@ type Outcome = Answered | Failed | StillWorking
 type Signature = httpx2.AsyncClient
 
 
-async def in_session[T](work: Callable[[Signature], Awaitable[T]]) -> T:
+async def with_signature[T](work: Callable[[Signature], Awaitable[T]]) -> T:
     """The work's result, done with one connection to Signature that presents the member's key."""
     async with httpx2.AsyncClient(base_url=os.environ['SIGNATURE_API_URL'],
                                   headers={'authorization': f'Bearer {os.environ["SIGNATURE_API_KEY"]}'},
@@ -81,9 +81,9 @@ async def body_of(signature: Signature, method: str, path: str, *, params: dict 
         raise SignatureUnreachable() from failure
     if response.status_code in (401, 403) and not is_problem(response):
         raise SignatureRefused(KEY_REJECTED)
-    if response.status_code >= 500 or not response.is_error:
-        if response.is_error:
-            raise SignatureUnreachable()
+    if response.status_code >= 500:
+        raise SignatureUnreachable()
+    if not response.is_error:
         return response.json()
     try:
         problem = response.json() if is_problem(response) else {}
@@ -221,13 +221,15 @@ async def published_at(signature: Signature, domain_id: str) -> str | None:
         return None
 
 
-def source_id_of(domain_id: str, service: str) -> str:
-    """The id Signature knows a local source by, the same on every report so a re-report replaces the last."""
-    return str(uuid.uuid5(uuid.NAMESPACE_URL, f'signature-plugin:source:{domain_id}:{service}'))
+def source_id_of(domain_id: str, location: str) -> str:
+    """The id Signature knows a local source by (uuid5 of the domain and its location: a service name, or an absolute
+    path), the same on every report so a re-report replaces the last."""
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f'signature-plugin:source:{domain_id}:{location}'))
 
 
-async def report_source(signature: Signature, domain_id: str, service: str, database: dict) -> dict:
-    """A source's structure, read on the member's machine, replacing what Signature held for that service."""
-    source_id = source_id_of(domain_id, service)
+async def report_source(signature: Signature, domain_id: str, database: dict, *, location: str, name: str) -> dict:
+    """A source's structure, read on the member's machine, replacing what Signature held for that location (a service
+    name, or an absolute path), reported under `name`."""
+    source_id = source_id_of(domain_id, location)
     return await body_of(signature, 'PUT', f'/domains/{domain_id}/model/sources/{source_id}/catalog',
-                         json={'name': service, 'database': database})
+                         json={'name': name, 'database': database})

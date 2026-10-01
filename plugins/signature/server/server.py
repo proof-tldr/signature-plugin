@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.12"
-# dependencies = ["mcp==2.2.0", "psycopg[binary]>=3.2"]
+# dependencies = ["mcp==2.2.0", "psycopg[binary]>=3.2", "duckdb>=1.4"]
 # ///
 """Signature's MCP server, run on the member's machine over stdio. It calls Signature's REST API with the
 member's key, and leaves each answer for the plugin's hook to show the member: the model learns only that it
@@ -16,6 +16,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 
 import answer_handoff
 import catalog_readers
+import local_files
 import signature_api
 
 
@@ -117,9 +118,20 @@ async def describe_dataset(domain_id: str, explanation: str, ctx: Context) -> Bu
 
 
 class SourceReported(TypedDict):
-    """What the model learns from report_source: which source, and how many tables, never the structure itself."""
+    """What the model learns from reporting a local source: which source, and how many tables, never the structure itself."""
     source: str
     tables: int
+
+
+async def report_local_source(domain_id: str, *, adapter: str, location: str, name: str) -> SourceReported:
+    """Reads the structure of what a location names on this machine and reports it to the domain under `name`."""
+    try:
+        structure = await catalog_readers.read_structure(adapter, location)
+    except catalog_readers.SourceNotUsable as unusable:
+        raise ToolError(str(unusable)) from unusable
+    await through_signature(lambda signature: signature_api.report_source(
+        signature, domain_id, structure.database, location=location, name=name))
+    return SourceReported(source=name, tables=structure.tables)
 
 
 @server.tool(description='Reports the structure (tables, columns, keys; never rows) of one of the user\'s local '
@@ -127,13 +139,17 @@ class SourceReported(TypedDict):
                          'in their ~/.pg_service.conf; the plugin reads and sends the structure itself, and you '
                          'never see or write it.')
 async def report_source(domain_id: str, service: str) -> SourceReported:
-    try:
-        structure = await catalog_readers.read_structure('postgresql', service)
-    except catalog_readers.SourceNotUsable as unusable:
-        raise ToolError(str(unusable)) from unusable
-    await through_signature(lambda signature: signature_api.report_source(
-        signature, domain_id, service, structure.database))
-    return SourceReported(source=service, tables=structure.tables)
+    return await report_local_source(domain_id, adapter='postgresql', location=service, name=service)
+
+
+@server.tool(description='Reports the structure (files, their columns and inferred types; never rows) of csv, tsv, parquet, '
+                         'json or xlsx files on the user\'s machine to a domain. `path` is one file, a folder of files '
+                         'or a glob such as ~/data/*.csv: only where to look. The plugin reads and sends the structure '
+                         'itself, and you never see or write it; the user confirms the inferred types in the review.')
+async def report_files(domain_id: str, path: str) -> SourceReported:
+    location = local_files.absolute_location(path)
+    return await report_local_source(domain_id, adapter='files', location=location,
+                                     name=local_files.source_name_of(location))
 
 
 @server.tool(description='Lists the questions Signature has asked about the domain and not yet had answered.')
@@ -203,7 +219,7 @@ def shown_and_told(ended: signature_api.Outcome) -> tuple[str, str]:
 async def through_signature[T](work: Callable[[signature_api.Signature], Awaitable[T]]) -> T:
     """The work done with Signature's API, its failures told to the model as tool errors."""
     try:
-        return await signature_api.in_session(work)
+        return await signature_api.with_signature(work)
     except signature_api.SignatureRefused as refused:
         raise ToolError(str(refused)) from refused
     except signature_api.DocumentRefused as refused:

@@ -1,15 +1,20 @@
-"""Reads a local database's structure through a libpq connection service the member defined (~/.pg_service.conf,
-passwords from ~/.pgpass), so no credential passes through the plugin's own code. Each adapter is a row of ADAPTERS: how
-to read its catalog, and how to shape what was read. Only the catalog is queried, never a table's rows."""
+"""Reads a local source's structure: a Postgres database through a libpq connection service the member defined
+(~/.pg_service.conf, passwords from ~/.pgpass), so no credential passes through the plugin's own code; or files
+through DuckDB. Each adapter is a row of ADAPTERS: how to read its structure, and how to shape what was read. Only
+structure is asked for, never a table's rows, and none is sent."""
 
+import asyncio
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
+import duckdb
 import psycopg
 from psycopg.conninfo import make_conninfo
 from psycopg.rows import dict_row
 
-from catalog_report import PostgresqlCatalogRows, postgresql_database, table_count
+import local_files
+from local_files import LocalFile
+from catalog_report import (FileColumn, FileStructure, PostgresqlCatalogRows, files_database, postgresql_database)
 
 USER_RELATIONS = '''
     relation.relkind IN ('r', 'p', 'v')
@@ -50,26 +55,6 @@ async def fetch_all(connection: psycopg.AsyncConnection, query: str) -> list[dic
     return await (await connection.execute(query)).fetchall()
 
 
-async def read_postgresql(service: str) -> dict:
-    """The `database` of a reported source, from a read-only look at Postgres's catalog."""
-    async with await psycopg.AsyncConnection.connect(make_conninfo(service=service), row_factory=dict_row) as connection:
-        await connection.set_read_only(True)
-        relations = await fetch_all(connection, RELATIONS)
-        columns = await fetch_all(connection, COLUMNS)
-        primary_keys = await fetch_all(connection, PRIMARY_KEYS)
-    return postgresql_database(PostgresqlCatalogRows(relations, columns, primary_keys))
-
-
-@dataclass(frozen=True)
-class Adapter:
-    """How to read one kind of database, and which failures mean it could not be reached or read."""
-    read: Callable[[str], Awaitable[dict]]
-    failures: tuple[type[Exception], ...]
-
-
-ADAPTERS = {'postgresql': Adapter(read_postgresql, (psycopg.Error, OSError))}
-
-
 @dataclass(frozen=True)
 class ReadStructure:
     """A source's structure as Signature takes it, and how many tables that holds."""
@@ -77,18 +62,78 @@ class ReadStructure:
     tables: int
 
 
+async def read_postgresql(service: str) -> ReadStructure:
+    """The structure of a reported source, from a read-only look at Postgres's catalog."""
+    async with await psycopg.AsyncConnection.connect(make_conninfo(service=service), row_factory=dict_row) as connection:
+        await connection.set_read_only(True)
+        relations = await fetch_all(connection, RELATIONS)
+        columns = await fetch_all(connection, COLUMNS)
+        primary_keys = await fetch_all(connection, PRIMARY_KEYS)
+    return ReadStructure(postgresql_database(PostgresqlCatalogRows(relations, columns, primary_keys)), len(relations))
+
+
+def load_extensions(connection: duckdb.DuckDBPyConnection, files: list[LocalFile]) -> None:
+    extensions = {file.format.extension for file in files if file.format.extension}
+    for extension in sorted(extensions):
+        connection.execute(f'INSTALL {extension}')
+        connection.execute(f'LOAD {extension}')
+
+
+def describe_file(connection: duckdb.DuckDBPyConnection, name: str, file: LocalFile) -> FileStructure:
+    """One file's columns, from DuckDB's DESCRIBE of it: types are inferred from a sample of the file; no row leaves."""
+    described = connection.execute(file.format.describe, [str(file.path)]).fetchall()
+    return FileStructure(name, [FileColumn(column, duckdb_type, nullable == 'YES')
+                                for column, duckdb_type, nullable, *_ in described])
+
+
+def describe_files(files: list[LocalFile]) -> list[FileStructure]:
+    connection = duckdb.connect()
+    try:
+        load_extensions(connection, files)
+        return [describe_file(connection, name, file) for name, file in zip(local_files.names_of(files), files)]
+    finally:
+        connection.close()
+
+
+async def read_files(location: str) -> ReadStructure:
+    """The structure of a reported source, from DuckDB's look at the structure of the files a location names."""
+    files = local_files.files_at(location)
+    if not files:
+        raise SourceNotUsable(f'No {local_files.SUPPORTED_SUFFIXES} file found at {location}.')
+    described = await asyncio.to_thread(describe_files, files)
+    return ReadStructure(files_database(described), len(described))
+
+
+@dataclass(frozen=True)
+class Adapter:
+    """How to read one kind of source, what its location is called, and which failures mean it could not be read."""
+    read: Callable[[str], Awaitable[ReadStructure]]
+    failures: tuple[type[Exception], ...]
+    subject: str
+    hint: str
+
+
+ADAPTERS = {
+    'postgresql': Adapter(read_postgresql, (psycopg.Error, OSError), 'service',
+                          'Check it is in ~/.pg_service.conf and its password in ~/.pgpass.'),
+    'files': Adapter(read_files, (duckdb.Error, OSError), 'the files at',
+                     'Check the files are readable; Excel files also need DuckDB\'s excel extension, which it '
+                     'downloads once.'),
+}
+
+
 class SourceNotUsable(Exception):
     """A local source that cannot be reported, with a reason that names no secret."""
 
 
-async def read_structure(adapter_name: str, service: str) -> ReadStructure:
-    """The structure of the database a connection service points at; one that cannot be read is refused."""
+async def read_structure(adapter_name: str, location: str) -> ReadStructure:
+    """The structure of the source a location names (a connection service, or where files are); one that cannot be read
+    is refused."""
     adapter = ADAPTERS.get(adapter_name)
     if adapter is None:
         raise SourceNotUsable(f'The plugin cannot read {adapter_name} databases. It reads: {", ".join(ADAPTERS)}.')
     try:
-        database = await adapter.read(service)
+        return await adapter.read(location)
     except adapter.failures as failure:
-        raise SourceNotUsable(f'Could not read the structure of service {service}: {type(failure).__name__}. '
-                              'Check it is in ~/.pg_service.conf and its password in ~/.pgpass.') from failure
-    return ReadStructure(database, table_count(database))
+        raise SourceNotUsable(f'Could not read the structure of {adapter.subject} {location}: '
+                              f'{type(failure).__name__}. {adapter.hint}') from failure

@@ -1,6 +1,7 @@
 """A catalog's rows become the exact request body Signature takes, carrying structure only."""
 
-from catalog_report import PostgresqlCatalogRows, postgresql_database, table_count
+from catalog_report import (FileColumn, FileStructure, PostgresqlCatalogRows, files_database,
+                            postgresql_database)
 
 ROWS = PostgresqlCatalogRows(
     relations=[
@@ -39,6 +40,10 @@ def test_rows_become_the_database_signature_takes():
     assert postgresql_database(ROWS) == EXPECTED
 
 
-def test_tables_are_counted_across_schemas():
-    assert table_count(EXPECTED) == 3
+def test_files_become_the_database_signature_takes():
+    files = [FileStructure('orders', [FileColumn('id', 'BIGINT', True), FileColumn('amount', 'DECIMAL(18,3)', True)])]
 
+    assert files_database(files) == {'adapter': 'files', 'catalog': {'files': [
+        {'name': 'orders', 'columns': [
+            {'name': 'id', 'nativeType': 'BIGINT', 'nullable': True},
+            {'name': 'amount', 'nativeType': 'DECIMAL(18,3)', 'nullable': True}]}]}}
