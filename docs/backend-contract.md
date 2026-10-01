@@ -15,14 +15,14 @@ id it chose: it reads the one domain the key opens from `GET /domains`.
 | `GET /domains/{id}` → `{name}` | exists |
 | `GET /domains/{id}/publication` → `{publishedAt}`, 404 while unpublished | exists |
 | `POST /domains/{id}/documents/presign` `{kind, filename, contentType, size, checksumSha256}` → `{url, contentRef}`, then `PUT url` | exists |
-| `PUT /domains/{id}/model/sources/{sourceId}/catalog` `{name, database}` | exists, but needs the `duckdb` adapter below |
+| `PUT /domains/{id}/model/sources/{sourceId}/catalog` `{name, database}` | exists, but needs the one-catalog `duckdb` format below (#240) |
 | `POST /domains/{id}/conversation/turns` `{idempotencyKey, text?, sources?}` → `{turn: {id}}` | exists |
 | `GET /domains/{id}/conversation/turns/{turnId}` → `{state: pending\|answered\|failed, reply?}` | exists |
 | `GET /domains/{id}/conversation/clarifying-questions` → `{questions: [{id, question, suggestedAnswers}]}` | exists |
 | `POST /domains/{id}/conversation/clarifying-questions/{questionId}/answer` `{answer}` → `{turn: {id}}` | exists |
 | `POST /domains/{id}/publish` | exists; a domain key may call it (checked 2026-10-01) |
 | `GET /domains/{id}/model/snapshot` → the whole model, rendered as the review page; its `mappings`, `mappingFields` and `columns` also let the plugin pull real examples from the customer's data | exists |
-| `POST /domains/{id}/queries`, `GET /domains/{id}/queries/{queryId}` | **new** |
+| `POST /domains/{id}/queries`, `GET /domains/{id}/queries/{queryId}` | **new** (#239) |
 
 ## Documents
 
