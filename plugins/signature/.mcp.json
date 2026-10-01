@@ -3,7 +3,7 @@
     "command": "${CLAUDE_PLUGIN_ROOT}/bin/signature",
     "args": ["signature-mcp"],
     "env": {
-      "SIGNATURE_API_URL": "${SIGNATURE_API_URL:-}",
+      "SIGNATURE_API_URL": "${SIGNATURE_API_URL:-https://d2378glmrsgsno.cloudfront.net}",
       "SIGNATURE_API_KEY": "${user_config.api_key}"
     }
   }

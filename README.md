@@ -70,5 +70,5 @@ uv run signature-fake-backend --port 8790
 SIGNATURE_API_URL=http://127.0.0.1:8790 claude --plugin-dir plugins/signature
 ```
 
-`SIGNATURE_API_URL` must be set until the key API's address is fixed in `.mcp.json`. The stand-in accepts
-any key.
+Without `SIGNATURE_API_URL`, the plugin uses Beta's key API (`KeyApiUrl`, https://d2378glmrsgsno.cloudfront.net).
+The stand-in accepts any key.

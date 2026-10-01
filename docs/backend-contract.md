@@ -1,7 +1,8 @@
 # Backend contract
 
 Every Signature-Platform operation the plugin calls, as `plugins/signature/server/src/signature_plugin/backend.py`
-calls it. All requests carry `Authorization: Bearer <domain-scoped API key>`. The plugin never sends a domain
+calls it. All requests go to the key API (Beta: `https://d2378glmrsgsno.cloudfront.net`) and carry
+`Authorization: Bearer <domain-scoped API key>`. The plugin never sends a domain
 id it chose: it reads the one domain the key opens from `GET /domains`.
 
 **Status** says whether Signature-Platform has the operation today (checked against `openapi.json` on
@@ -19,7 +20,7 @@ id it chose: it reads the one domain the key opens from `GET /domains`.
 | `GET /domains/{id}/conversation/turns/{turnId}` → `{state: pending\|answered\|failed, reply?}` | exists |
 | `GET /domains/{id}/conversation/clarifying-questions` → `{questions: [{id, question, suggestedAnswers}]}` | exists |
 | `POST /domains/{id}/conversation/clarifying-questions/{questionId}/answer` `{answer}` → `{turn: {id}}` | exists |
-| `POST /domains/{id}/publish` | exists; check that a domain key may call it |
+| `POST /domains/{id}/publish` | exists; a domain key may call it (checked 2026-10-01) |
 | `GET /domains/{id}/review` | **new** |
 | `POST /domains/{id}/queries`, `GET /domains/{id}/queries/{queryId}` | **new** |
 

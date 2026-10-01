@@ -54,4 +54,3 @@ yours to work out.
 - What does Signature actually need to know about each source?
 - When should Signature stop the build to ask a question, beyond contradictions?
 - Should Claude also ask which questions the customer wants answered, to focus the domain?
-- Can a domain-scoped key publish? From reading Signature-Platform's code it should; test it.
