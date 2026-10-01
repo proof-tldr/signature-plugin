@@ -9,7 +9,7 @@ SHOWN_ROWS = 50
 CELL_WIDTH = 40
 
 
-def rendered(reading: str | None, result: Result) -> str:
+def answer_text(reading: str | None, result: Result) -> str:
     lines = [f'Signature read your question as: {reading}', ''] if reading else []
     if not result.rows:
         return '\n'.join([*lines, 'No rows match.'])

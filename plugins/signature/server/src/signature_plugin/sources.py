@@ -62,7 +62,7 @@ class Sources:
         folder.mkdir(mode=0o700, parents=True, exist_ok=True)
         self._file = folder / 'sources.json'
 
-    def all(self) -> list[FileSource | DatabaseSource]:
+    def all(self) -> list[Source]:
         if not self._file.exists():
             return []
         return SAVED.validate_json(self._file.read_bytes())
@@ -103,7 +103,7 @@ class Sources:
                 _forget_password(source)
         self._save([source for source in existing if source.name != name])
 
-    def _save(self, sources: list[FileSource | DatabaseSource]) -> None:
+    def _save(self, sources: list[Source]) -> None:
         self._file.write_bytes(SAVED.dump_json(sources, indent=2))
         self._file.chmod(0o600)
 

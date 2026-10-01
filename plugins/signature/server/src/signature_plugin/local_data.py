@@ -10,19 +10,22 @@ import threading
 from collections.abc import Generator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Any, cast
+from typing import Any, TypedDict, cast
 
 import duckdb
 
-from signature_plugin.sources import DatabaseSource, FileSource, Source, SourceRefused, password_of
+from signature_plugin.sources import DatabaseSource, FileFormat, FileSource, Source, SourceRefused, password_of
 
+# Files are views in this schema of DuckDB's own in-memory database; each database source is attached beside it.
+FILES_DATABASE = 'memory'
+FILES_SCHEMA = 'files'
 SYSTEM_SCHEMAS = {'information_schema', 'pg_catalog', 'mysql', 'performance_schema', 'sys'}
 SAMPLE_ROWS = 1000
 SAMPLE_VALUES = 5
 SAMPLE_TEXT_LENGTH = 80
 QUERY_TIMEOUT_SECONDS = 120.0
 # Each file format's DuckDB reader, and the extension it needs loaded before the connection is locked.
-FILE_READERS: dict[str, tuple[str, str | None]] = {
+FILE_READERS: dict[FileFormat, tuple[str, str | None]] = {
     'csv': ('read_csv', None),
     'parquet': ('read_parquet', None),
     'json': ('read_json', 'json'),
@@ -44,6 +47,25 @@ class Result:
     truncated: bool
 
 
+class Column(TypedDict):
+    name: str
+    type: str
+    nullable: bool
+    primaryKey: bool
+    examples: list[str]
+
+
+class Table(TypedDict):
+    schema: str
+    name: str
+    sqlName: str
+    columns: list[Column]
+
+
+class Catalog(TypedDict):
+    tables: list[Table]
+
+
 @dataclass(frozen=True)
 class TableSummary:
     name: str
@@ -53,14 +75,14 @@ class TableSummary:
 def check(source: Source) -> list[TableSummary]:
     """The tables a source holds, opening it alone: a source that cannot be opened is refused, with why."""
     with _opened([source]) as connection:
-        return [TableSummary(table['name'], len(table['columns'])) for table in _tables(connection, source)]
+        return [TableSummary(table['name'], len(table['columns'])) for table in _tables(connection, source, 0)]
 
 
-def catalogs(sources: Sequence[Source]) -> dict[str, dict[str, Any]]:
+def catalogs(sources: Sequence[Source]) -> dict[str, Catalog]:
     """What Signature is told about each source, by name: its tables, their columns, types and keys, and a few
     example values per column, so it can see what codes and formats the data uses. Never whole rows."""
     with _opened(sources) as connection:
-        return {source.name: {'tables': _tables(connection, source, with_examples=True)} for source in sources}
+        return {source.name: Catalog(tables=_tables(connection, source, SAMPLE_VALUES)) for source in sources}
 
 
 def run(sources: Sequence[Source], sql: str) -> Result:
@@ -88,7 +110,7 @@ def _opened(sources: Sequence[Source]) -> Generator[duckdb.DuckDBPyConnection]:
     """All the sources in one DuckDB, locked: no file but theirs can be read, and nothing written anywhere."""
     connection = duckdb.connect(':memory:')
     try:
-        connection.execute('CREATE SCHEMA files')
+        connection.execute(f'CREATE SCHEMA {FILES_SCHEMA}')
         for source in sources:
             _attach(connection, source)
         allowed = [source.path for source in sources if isinstance(source, FileSource)]
@@ -107,9 +129,8 @@ def _attach(connection: duckdb.DuckDBPyConnection, source: Source) -> None:
                 reader, extension = FILE_READERS[source.format]
                 if extension:
                     connection.execute(f'INSTALL {extension}; LOAD {extension}')
-                connection.execute(
-                    f'CREATE VIEW files.{_quoted(source.name)} AS SELECT * FROM {reader}({_literal(source.path)})'
-                )
+                view = f'{FILES_SCHEMA}.{_quoted(source.name)}'
+                connection.execute(f'CREATE VIEW {view} AS SELECT * FROM {reader}({_literal(source.path)})')
             case DatabaseSource():
                 connection.execute(f'INSTALL {source.engine}; LOAD {source.engine}')
                 secret = _quoted(f'{source.name}_login')
@@ -125,15 +146,14 @@ def _attach(connection: duckdb.DuckDBPyConnection, source: Source) -> None:
         raise SourceRefused(f'{source.name} could not be opened: {failure}') from failure
 
 
-def _tables(
-    connection: duckdb.DuckDBPyConnection, source: Source, *, with_examples: bool = False
-) -> list[dict[str, Any]]:
+def _tables(connection: duckdb.DuckDBPyConnection, source: Source, examples_per_column: int) -> list[Table]:
+    """The source's tables, with up to that many example values for each column."""
     match source:
         case FileSource():
-            database = 'memory'
+            database = FILES_DATABASE
             columns = connection.execute(
-                f"{COLUMNS} WHERE database_name = 'memory' AND schema_name = 'files' AND table_name = ? {ORDER}",
-                [source.name],
+                f'{COLUMNS} WHERE database_name = ? AND schema_name = ? AND table_name = ? {ORDER}',
+                [FILES_DATABASE, FILES_SCHEMA, source.name],
             ).fetchall()
         case DatabaseSource():
             database = source.name
@@ -142,24 +162,19 @@ def _tables(
                 [source.name, sorted(SYSTEM_SCHEMAS)],
             ).fetchall()
     keys = _primary_keys(connection, database)
-    tables: dict[tuple[str, str], dict[str, Any]] = {}
+    tables: dict[tuple[str, str], Table] = {}
     for schema, table, column, data_type, nullable in columns:
-        entry = tables.setdefault(
-            (schema, table),
-            {'schema': schema, 'name': table, 'sqlName': _sql_name(database, schema, table), 'columns': []},
-        )
+        sql_name = _sql_name(database, schema, table)
+        entry = tables.setdefault((schema, table), Table(schema=schema, name=table, sqlName=sql_name, columns=[]))
         entry['columns'].append(
-            {
-                'name': column,
-                'type': data_type,
-                'nullable': nullable,
-                'primaryKey': column in keys.get((schema, table), set()),
-            }
+            Column(
+                name=column,
+                type=data_type,
+                nullable=nullable,
+                primaryKey=column in keys.get((schema, table), set()),
+                examples=_examples(connection, sql_name, column, examples_per_column),
+            )
         )
-    if with_examples:
-        for entry in tables.values():
-            for column in entry['columns']:
-                column['examples'] = _examples(connection, entry['sqlName'], column['name'])
     return list(tables.values())
 
 
@@ -172,17 +187,20 @@ def _primary_keys(connection: duckdb.DuckDBPyConnection, database: str) -> dict[
     return {(schema, table): set(columns) for schema, table, columns in rows}
 
 
-def _examples(connection: duckdb.DuckDBPyConnection, table: str, column: str) -> list[str]:
+def _examples(connection: duckdb.DuckDBPyConnection, table: str, column: str, count: int) -> list[str]:
+    if count == 0:
+        return []
     quoted = _quoted(column)
     values = connection.execute(
         f"""SELECT DISTINCT CAST({quoted} AS VARCHAR) FROM (SELECT {quoted} FROM {table} LIMIT {SAMPLE_ROWS})
-            WHERE {quoted} IS NOT NULL LIMIT {SAMPLE_VALUES}"""
+            WHERE {quoted} IS NOT NULL LIMIT {count}"""
     ).fetchall()
     return [value[:SAMPLE_TEXT_LENGTH] for (value,) in values]
 
 
 def _sql_name(database: str, schema: str, table: str) -> str:
-    return '.'.join(_quoted(part) for part in ((schema, table) if database == 'memory' else (database, schema, table)))
+    parts = (schema, table) if database == FILES_DATABASE else (database, schema, table)
+    return '.'.join(_quoted(part) for part in parts)
 
 
 def _quoted(identifier: str) -> str:

@@ -73,7 +73,7 @@ class Added(TypedDict):
 
 class BuildProgress(TypedDict):
     state: Literal['built', 'questions', 'building', 'failed']
-    turn_id: str
+    build_id: str
     reply: str | None
     open_questions: list[QuestionView]
     note: str
@@ -154,7 +154,7 @@ async def _session() -> AsyncGenerator[Session]:
     'the sources added so far, and the questions Signature is waiting on.'
 )
 @_tool_errors
-async def get_status(ctx: Context[PluginState]) -> Status:
+async def get_status() -> Status:
     async with _session() as session:
         domain = await session.signature.domain()
         return Status(
@@ -171,7 +171,7 @@ async def get_status(ctx: Context[PluginState]) -> Status:
     'their structure and a few example values when you build.'
 )
 @_tool_errors
-async def add_data_files(paths: list[str], ctx: Context[PluginState]) -> list[Added]:
+async def add_data_files(paths: list[str]) -> list[Added]:
     async with _session() as session:
         added = session.sources.add_files(paths)
         try:
@@ -208,7 +208,7 @@ async def connect_database(ctx: Context[PluginState], suggested_name: str | None
 
 @server.tool(description='Removes a source the customer no longer wants Signature to use.')
 @_tool_errors
-async def remove_source(name: str, ctx: Context[PluginState]) -> str:
+async def remove_source(name: str) -> str:
     async with _session() as session:
         session.sources.remove(name)
     return f'{name} removed. Build again for Signature to drop it.'
@@ -228,14 +228,15 @@ async def build(
         signature, sources = session.signature, session.sources.all()
         if not sources and not documents:
             raise ToolError("There is nothing to build from yet: add the customer's data or documents first.")
+        contents = [await _document(path) for path in documents or []]
         await ctx.report_progress(0, message='Telling Signature about your data…')
         catalogs = await anyio.to_thread.run_sync(local_data.catalogs, sources)
         for source in sources:
             await signature.report_source(_source_id(signature, source), source.name, catalogs[source.name])
         await ctx.report_progress(0, message='Uploading your documents…')
-        staged = [await signature.stage_document(path) for path in documents or []]
-        turn_id = await signature.start_build(note, staged)
-        return await _followed(signature, turn_id, ctx)
+        staged = [await signature.stage_document(name, content) for name, content in contents]
+        build_id = await signature.start_build(note, staged)
+        return await _followed(signature, build_id, ctx)
 
 
 @server.tool(
@@ -248,17 +249,17 @@ async def answer_questions(answers: list[Answer], ctx: Context[PluginState]) -> 
     if not answers:
         raise ToolError('Give at least one answer.')
     async with _session() as session:
-        turn_ids = [
+        build_ids = [
             await session.signature.answer_question(given['question_id'], _attributed(given)) for given in answers
         ]
-        return await _followed(session.signature, turn_ids[-1], ctx)
+        return await _followed(session.signature, build_ids[-1], ctx)
 
 
 @server.tool(description='Keeps waiting on a build that was still going when the last call returned.')
 @_tool_errors
-async def wait_for_build(turn_id: str, ctx: Context[PluginState]) -> BuildProgress:
+async def wait_for_build(build_id: str, ctx: Context[PluginState]) -> BuildProgress:
     async with _session() as session:
-        return await _followed(session.signature, turn_id, ctx)
+        return await _followed(session.signature, build_id, ctx)
 
 
 @server.tool(
@@ -282,12 +283,12 @@ async def review(ctx: Context[PluginState]) -> Reviewed | Waiting:
         if decision.publish:
             await signature.publish()
             return Reviewed(state='published', note='Published. The customer can now ask questions.', build=None)
-        turn_id = await signature.start_build(decision.changes, [])
+        build_id = await signature.start_build(decision.changes, [])
         return Reviewed(
             state='changes_requested',
             note='The customer asked for changes, which were sent to Signature. Open the review again once the '
             'build has no open questions.',
-            build=await _followed(signature, turn_id, ctx),
+            build=await _followed(signature, build_id, ctx),
         )
 
 
@@ -309,7 +310,7 @@ async def ask_question(question: str, ctx: Context[PluginState], thread_id: str 
             case 'planned' if plan.sql:
                 await ctx.report_progress(0, message='Running it on your data…')
                 result = await anyio.to_thread.run_sync(local_data.run, session.sources.all(), plan.sql)
-                handoff.leave(query_id, presentation.rendered(plan.reading, result))
+                handoff.leave(query_id, presentation.answer_text(plan.reading, result))
                 told = 'The answer was shown to the customer.'
             case 'unanswerable':
                 handoff.leave(query_id, f"Signature can't answer this from your domain: {plan.reason}")
@@ -321,6 +322,15 @@ async def ask_question(question: str, ctx: Context[PluginState], thread_id: str 
             thread_id=plan.thread_id,
             note=f'{told} You cannot see it. For a follow-up, pass this thread_id.',
         )
+
+
+async def _document(location: str) -> tuple[str, bytes]:
+    """The document's file name and its bytes, exactly as the customer gave it."""
+    path = await anyio.Path(location).expanduser()
+    try:
+        return path.name, await path.read_bytes()
+    except OSError as failure:
+        raise ToolError(f'Could not read {location}: {failure.strerror}.') from failure
 
 
 async def _checked(source: Source) -> Added:
@@ -386,22 +396,22 @@ async def _decision_on_page[T](
     return decision
 
 
-async def _followed(signature: Signature, turn_id: str, ctx: Context[PluginState]) -> BuildProgress:
-    """The build turn followed until it ends, or until the wait runs out, with what Claude should do next."""
+async def _followed(signature: Signature, build_id: str, ctx: Context[PluginState]) -> BuildProgress:
+    """The build followed until it ends, or until the wait runs out, with what Claude should do next."""
     await ctx.report_progress(0, message='Signature is building your domain…')
-    turn = await _waited(lambda: signature.turn(turn_id), lambda found: found.state == 'pending')
-    if turn is None:
+    status = await _waited(lambda: signature.build_status(build_id), lambda found: found.state == 'pending')
+    if status is None:
         return BuildProgress(
             state='building',
-            turn_id=turn_id,
+            build_id=build_id,
             reply=None,
             open_questions=[],
-            note='Signature is still building. Call wait_for_build with this turn_id.',
+            note='Signature is still building. Call wait_for_build with this build_id.',
         )
-    if turn.state == 'failed':
+    if status.state == 'failed':
         return BuildProgress(
             state='failed',
-            turn_id=turn_id,
+            build_id=build_id,
             reply=None,
             open_questions=[],
             note='Signature could not finish this build. Try again, or hand it less at once.',
@@ -410,16 +420,16 @@ async def _followed(signature: Signature, turn_id: str, ctx: Context[PluginState
     if questions:
         return BuildProgress(
             state='questions',
-            turn_id=turn_id,
-            reply=turn.reply,
+            build_id=build_id,
+            reply=status.reply,
             open_questions=questions,
             note='Answer what you can from what the customer told you or gave you; ask the '
             'customer the rest together, then call answer_questions.',
         )
     return BuildProgress(
         state='built',
-        turn_id=turn_id,
-        reply=turn.reply,
+        build_id=build_id,
+        reply=status.reply,
         open_questions=[],
         note='Nothing is open. Tell the customer what Signature did, then call review.',
     )

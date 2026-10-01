@@ -5,18 +5,19 @@ import base64
 import hashlib
 import mimetypes
 import uuid
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Any, Literal
 
-import anyio
 import httpx2
 
 from signature_plugin.settings import Settings
 
 REQUEST_TIMEOUT_SECONDS = 30.0
 MAX_DOCUMENT_BYTES = 5 * 1024 * 1024
+# Signature asks what kind of document each is; the plugin hands documents over as they are, unclassified.
+DOCUMENT_KIND = 'notes'
 
 
 class SignatureRefused(Exception):
@@ -29,7 +30,6 @@ class SignatureUnreachable(Exception):
 
 @dataclass(frozen=True)
 class Domain:
-    id: str
     name: str
     published_at: str | None
 
@@ -40,12 +40,14 @@ class StagedDocument:
     content_ref: str
 
 
-type TurnState = Literal['pending', 'answered', 'failed']
+type BuildState = Literal['pending', 'answered', 'failed']
 
 
 @dataclass(frozen=True)
-class Turn:
-    state: TurnState
+class BuildStatus:
+    """Where a build stands; Signature's API calls a build a conversation turn."""
+
+    state: BuildState
     reply: str | None
 
 
@@ -78,30 +80,21 @@ class Signature:
     async def domain(self) -> Domain:
         found = await _body(self._client, 'GET', f'/domains/{self.domain_id}')
         publication = await _body(self._client, 'GET', f'/domains/{self.domain_id}/publication', absent_ok=True)
-        return Domain(
-            id=self.domain_id,
-            name=found['name'],
-            published_at=publication['publishedAt'] if publication else None,
-        )
+        return Domain(name=found['name'], published_at=publication['publishedAt'] if publication else None)
 
-    async def stage_document(self, location: str) -> StagedDocument:
-        """The document at that path stored with Signature as it is, ready for a build to read."""
-        path = await anyio.Path(location).expanduser()
-        try:
-            content = await path.read_bytes()
-        except OSError as failure:
-            raise SignatureRefused(f'Could not read {location}: {failure.strerror}.') from failure
+    async def stage_document(self, filename: str, content: bytes) -> StagedDocument:
+        """The document stored with Signature as it is, ready for a build to read."""
         if len(content) > MAX_DOCUMENT_BYTES:
-            raise SignatureRefused(f'{path.name} is over {MAX_DOCUMENT_BYTES // (1024 * 1024)} MB.')
-        content_type = mimetypes.guess_type(path.name)[0] or 'application/octet-stream'
+            raise SignatureRefused(f'{filename} is over {MAX_DOCUMENT_BYTES // (1024 * 1024)} MB.')
+        content_type = mimetypes.guess_type(filename)[0] or 'application/octet-stream'
         checksum = base64.b64encode(hashlib.sha256(content).digest()).decode()
         promised = await _body(
             self._client,
             'POST',
             f'/domains/{self.domain_id}/documents/presign',
             json={
-                'kind': 'notes',
-                'filename': path.name,
+                'kind': DOCUMENT_KIND,
+                'filename': filename,
                 'contentType': content_type,
                 'size': len(content),
                 'checksumSha256': checksum,
@@ -117,10 +110,10 @@ class Signature:
         except httpx2.HTTPError as failure:
             raise SignatureUnreachable() from failure
         if stored.is_error:
-            raise SignatureRefused(f'Signature could not store {path.name}.')
-        return StagedDocument(filename=path.name, content_ref=promised['contentRef'])
+            raise SignatureRefused(f'Signature could not store {filename}.')
+        return StagedDocument(filename=filename, content_ref=promised['contentRef'])
 
-    async def report_source(self, source_id: str, name: str, catalog: dict[str, Any]) -> None:
+    async def report_source(self, source_id: str, name: str, catalog: Mapping[str, object]) -> None:
         """A source's structure, replacing whatever Signature held for it before."""
         await _body(
             self._client,
@@ -130,21 +123,21 @@ class Signature:
         )
 
     async def start_build(self, text: str | None, documents: list[StagedDocument]) -> str:
-        """A build turn over what was handed over; its id."""
+        """A build over what was handed over; its id."""
         body: dict[str, Any] = {'idempotencyKey': str(uuid.uuid4())}
         if text:
             body['text'] = text
         if documents:
             body['sources'] = [
-                {'kind': 'notes', 'filename': document.filename, 'contentRef': document.content_ref}
+                {'kind': DOCUMENT_KIND, 'filename': document.filename, 'contentRef': document.content_ref}
                 for document in documents
             ]
         accepted = await _body(self._client, 'POST', f'/domains/{self.domain_id}/conversation/turns', json=body)
         return accepted['turn']['id']
 
-    async def turn(self, turn_id: str) -> Turn:
-        found = await _body(self._client, 'GET', f'/domains/{self.domain_id}/conversation/turns/{turn_id}')
-        return Turn(state=found['state'], reply=found.get('reply'))
+    async def build_status(self, build_id: str) -> BuildStatus:
+        found = await _body(self._client, 'GET', f'/domains/{self.domain_id}/conversation/turns/{build_id}')
+        return BuildStatus(state=found['state'], reply=found.get('reply'))
 
     async def open_questions(self) -> list[OpenQuestion]:
         found = await _body(self._client, 'GET', f'/domains/{self.domain_id}/conversation/clarifying-questions')
@@ -156,7 +149,7 @@ class Signature:
         ]
 
     async def answer_question(self, question_id: str, answer: str) -> str:
-        """The answer given; the id of the build turn Signature continues with."""
+        """The answer given; the id of the build Signature continues with."""
         accepted = await _body(
             self._client,
             'POST',
