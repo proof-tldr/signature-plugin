@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.12"
-# dependencies = ["mcp==2.2.0", "psycopg[binary]>=3.2"]
+# dependencies = ["mcp==2.2.0", "psycopg[binary]>=3.2", "duckdb>=1.4"]
 # ///
 """Signature's MCP server, run on the member's machine over stdio. It calls Signature's REST API with the
 member's key, and leaves each answer for the plugin's hook to show the member: the model learns only that it
@@ -16,6 +16,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 
 import answer_handoff
 import catalog_readers
+import local_files
 import signature_api
 
 
@@ -134,6 +135,22 @@ async def report_source(domain_id: str, service: str) -> SourceReported:
     await through_signature(lambda signature: signature_api.report_source(
         signature, domain_id, service, structure.database))
     return SourceReported(source=service, tables=structure.tables)
+
+
+@server.tool(description='Reports the structure (files, their columns and inferred types; never rows) of csv, tsv, parquet, '
+                         'json or xlsx files on the user\'s machine to a domain. `path` is one file, a folder of files '
+                         'or a glob such as ~/data/*.csv: only where to look. The plugin reads and sends the structure '
+                         'itself, and you never see or write it; the user confirms the inferred types in the review.')
+async def report_files(domain_id: str, path: str) -> SourceReported:
+    location = local_files.absolute_location(path)
+    try:
+        structure = await catalog_readers.read_structure('files', location)
+    except catalog_readers.SourceNotUsable as unusable:
+        raise ToolError(str(unusable)) from unusable
+    name = location.rstrip('/').rsplit('/', 1)[-1]
+    await through_signature(lambda signature: signature_api.report_source(
+        signature, domain_id, location, structure.database, name))
+    return SourceReported(source=name, tables=structure.tables)
 
 
 @server.tool(description='Lists the questions Signature has asked about the domain and not yet had answered.')

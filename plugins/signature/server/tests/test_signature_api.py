@@ -35,3 +35,8 @@ def test_an_answer_is_one_post_to_the_questions_answer_endpoint():
     assert asyncio.run(answered()) == 't1'
     assert [(request.method, request.url.path, request.read()) for request in requests] == [
         ('POST', '/domains/d1/conversation/clarifying-questions/q1/answer', b'{"answer":"Weekly"}')]
+
+
+def test_a_folder_is_one_source_by_its_absolute_path():
+    assert source_id_of('d1', '/data/exports') == source_id_of('d1', '/data/exports')
+    assert source_id_of('d1', '/data/exports') != source_id_of('d1', '/data/other')
