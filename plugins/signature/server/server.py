@@ -9,7 +9,7 @@ was shown."""
 import json
 import logging
 from collections.abc import Awaitable, Callable
-from typing import TypedDict
+from typing import Literal, TypedDict
 
 from mcp.server.mcpserver import Context, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
@@ -25,7 +25,11 @@ class AskedResult(TypedDict):
     note: str
 
 
-server = MCPServer('signature', instructions='Answers to questions are shown to the user, never to you.')
+INSTRUCTIONS = '''Answers to questions are shown to the user, never to you.
+You build a Signature domain with the user: you already know much of their business and files, so hand Signature
+what you can find and explain what it means, and ask the user only what you cannot tell.'''
+
+server = MCPServer('signature', instructions=INSTRUCTIONS)
 
 
 @server.tool(description='Lists the domains in this workspace. A domain is a business data model you can ask '
@@ -45,13 +49,103 @@ async def ask_question(domain_id: str, question: str, ctx: Context, thread_id: s
     async def asked_and_ended(signature: signature_api.Signature) -> tuple[signature_api.Asked, signature_api.Outcome]:
         asked = await signature_api.ask(signature, domain_id, question, thread_id)
         await ctx.report_progress(0, message='Signature is answering…')
-        return asked, await signature_api.outcome(signature, domain_id, asked)
+        return asked, await signature_api.outcome(signature, domain_id, asked.turn_id)
 
     asked, ended = await through_signature(asked_and_ended)
     shown, told = shown_and_told(ended)
     answer_handoff.leave(asked.turn_id, shown)
     return AskedResult(thread_id=asked.thread_id, turn_id=asked.turn_id,
                        note=f'{told} For a follow-up, call ask_question with this thread_id.')
+
+
+class Built(TypedDict):
+    """What the model learns from a build turn Signature finished: its reply, and what it still needs to know."""
+    reply: str
+    open_questions: list[dict]
+    note: str
+
+
+class StillBuilding(TypedDict):
+    """What the model learns from a build turn Signature had not finished by the time the wait ended."""
+    note: str
+
+
+BUILT = 'Tell the user what Signature did.'
+BUILT_WITH_QUESTIONS = ('Tell the user what Signature did. Answer the open questions you can from what you know; '
+                        'ask the user the rest.')
+STILL_BUILDING = 'Signature is still building. Check get_domain_status in a moment.'
+BUILD_FAILED = 'Signature could not finish building from this. Try again, or hand it less at once.'
+
+
+class SourceFile(TypedDict):
+    path: str
+    kind: Literal['policy', 'spec', 'notes']
+
+
+class DomainStatus(TypedDict):
+    name: str
+    description: str | None
+    published_at: str | None
+    open_questions: list[dict]
+
+
+@server.tool(description='Creates a new, empty domain in this workspace, and returns it with its id.')
+async def create_domain(name: str, description: str | None = None) -> str:
+    return json.dumps(await through_signature(
+        lambda signature: signature_api.create_domain(signature, name, description)))
+
+
+@server.tool(description='Hands Signature files that describe the business: policies, specs or notes, up to 12, '
+                         '5 MB each. Explain what they mean and how they relate in `explanation`. Signature builds '
+                         'the domain from them and replies.')
+async def add_documents(domain_id: str, files: list[SourceFile], ctx: Context,
+                        explanation: str | None = None) -> Built | StillBuilding:
+    async def built(signature: signature_api.Signature) -> Built | StillBuilding:
+        uploads = signature_api.uploads_of([(file['path'], file['kind']) for file in files])
+        sources = [await signature_api.staged(signature, domain_id, upload) for upload in uploads]
+        return await built_from(signature, domain_id, explanation, sources, ctx)
+
+    return await through_signature(built)
+
+
+@server.tool(description='Tells Signature how the user\'s data relates to the domain\'s concepts: what a table or '
+                         'file holds, what its rows mean, what its codes stand for. Say which claims the user made '
+                         'and which you inferred. Signature uses it to build and replies.')
+async def describe_dataset(domain_id: str, explanation: str, ctx: Context) -> Built | StillBuilding:
+    return await through_signature(lambda signature: built_from(signature, domain_id, explanation, [], ctx))
+
+
+@server.tool(description='Lists the questions Signature has asked about the domain and not yet had answered.')
+async def list_clarifications(domain_id: str) -> str:
+    return json.dumps(await through_signature(
+        lambda signature: signature_api.clarifying_questions(signature, domain_id)))
+
+
+@server.tool(description='Returns where a domain stands: its name, when it was last published (null if never), '
+                         'and the questions Signature still has about it.')
+async def get_domain_status(domain_id: str) -> DomainStatus:
+    async def status(signature: signature_api.Signature) -> DomainStatus:
+        found = await signature_api.domain(signature, domain_id)
+        return DomainStatus(name=found['name'], description=found['description'],
+                            published_at=await signature_api.published_at(signature, domain_id),
+                            open_questions=await signature_api.clarifying_questions(signature, domain_id))
+
+    return await through_signature(status)
+
+
+async def built_from(signature: signature_api.Signature, domain_id: str, text: str | None,
+                     sources: list[signature_api.StagedSource], ctx: Context) -> Built | StillBuilding:
+    """One build turn sent and followed to its end, with the questions it leaves open."""
+    turn_id = await signature_api.build(signature, domain_id, text, sources)
+    await ctx.report_progress(0, message='Signature is building…')
+    match await signature_api.outcome(signature, domain_id, turn_id):
+        case signature_api.Answered(reply):
+            questions = await signature_api.clarifying_questions(signature, domain_id)
+            return Built(reply=reply, open_questions=questions, note=BUILT_WITH_QUESTIONS if questions else BUILT)
+        case signature_api.Failed():
+            raise ToolError(BUILD_FAILED)
+        case signature_api.StillWorking():
+            return StillBuilding(note=STILL_BUILDING)
 
 
 def shown_and_told(ended: signature_api.Outcome) -> tuple[str, str]:
@@ -73,6 +167,8 @@ async def through_signature[T](work: Callable[[signature_api.Signature], Awaitab
     try:
         return await signature_api.in_session(work)
     except signature_api.SignatureRefused as refused:
+        raise ToolError(str(refused)) from refused
+    except signature_api.DocumentRefused as refused:
         raise ToolError(str(refused)) from refused
     except signature_api.SignatureUnreachable as unreachable:
         raise ToolError('Signature could not be reached. Try again in a moment.') from unreachable

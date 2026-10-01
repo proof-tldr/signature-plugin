@@ -2,10 +2,14 @@
 question asked and followed to its outcome."""
 
 import asyncio
+import base64
+import hashlib
+import mimetypes
 import os
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from pathlib import Path
 
 import httpx2
 
@@ -13,10 +17,20 @@ KEY_REJECTED = 'Signature did not accept your API key. Run /plugin configure sig
 POLL_SECONDS = 1.0
 WAIT_SECONDS = 570.0
 REQUEST_TIMEOUT_SECONDS = 30.0
+MAX_DOCUMENTS = 12
+MAX_DOCUMENT_BYTES = 5 * 1024 * 1024
 
 
 class SignatureRefused(Exception):
     """A request Signature refused, with the reason it gave."""
+
+
+class NotFound(SignatureRefused):
+    """Signature has nothing at that address."""
+
+
+class DocumentRefused(Exception):
+    """A file that cannot be handed to Signature, with the reason."""
 
 
 class SignatureUnreachable(Exception):
@@ -75,7 +89,8 @@ async def body_of(signature: Signature, method: str, path: str, *, params: dict 
         problem = response.json() if is_problem(response) else {}
     except ValueError:  # a malformed problem body still refuses, with the status's own words
         problem = {}
-    raise SignatureRefused(problem.get('detail') or problem.get('title') or response.reason_phrase)
+    reason = problem.get('detail') or problem.get('title') or response.reason_phrase
+    raise NotFound(reason) if response.status_code == 404 else SignatureRefused(reason)
 
 
 def is_problem(response: httpx2.Response) -> bool:
@@ -98,15 +113,101 @@ async def ask(signature: Signature, domain_id: str, question: str, thread_id: st
     return Asked(thread_id, accepted['turn']['id'])
 
 
-async def outcome(signature: Signature, domain_id: str, asked: Asked) -> Outcome:
-    """The question's outcome, waited for while it is pending, up to WAIT_SECONDS."""
+async def outcome(signature: Signature, domain_id: str, turn_id: str) -> Outcome:
+    """A turn's outcome, waited for while it is pending, up to WAIT_SECONDS."""
     loop = asyncio.get_running_loop()
     deadline = loop.time() + WAIT_SECONDS
     while loop.time() < deadline:
-        turn = await body_of(signature, 'GET', f'/domains/{domain_id}/conversation/turns/{asked.turn_id}')
+        turn = await body_of(signature, 'GET', f'/domains/{domain_id}/conversation/turns/{turn_id}')
         if turn['state'] == 'answered':
             return Answered(turn['reply'])
         if turn['state'] == 'failed':
             return Failed()
         await asyncio.sleep(POLL_SECONDS)
     return StillWorking()
+
+
+@dataclass(frozen=True)
+class Upload:
+    """A document's bytes, and what Signature's storage checks them against."""
+    kind: str
+    filename: str
+    content: bytes
+    content_type: str
+    checksum: str
+
+
+@dataclass(frozen=True)
+class StagedSource:
+    """A document stored with Signature, ready for a build turn to read."""
+    kind: str
+    filename: str
+    content_ref: str
+
+
+async def create_domain(signature: Signature, name: str, description: str | None) -> dict:
+    return await body_of(signature, 'POST', '/domains',
+                         json={'name': name} | ({'description': description} if description else {}))
+
+
+def uploads_of(files: list[tuple[str, str]]) -> list[Upload]:
+    """The (path, kind) files read and checked against Signature's limits; a file it would refuse raised."""
+    if len(files) > MAX_DOCUMENTS:
+        raise DocumentRefused(f'Signature takes at most {MAX_DOCUMENTS} documents at once.')
+    return [upload_of(Path(path).expanduser(), kind) for path, kind in files]
+
+
+def upload_of(path: Path, kind: str) -> Upload:
+    try:
+        content = path.read_bytes()
+    except OSError as failure:
+        raise DocumentRefused(f'Could not read {path}: {failure.strerror}.') from failure
+    if len(content) > MAX_DOCUMENT_BYTES:
+        raise DocumentRefused(f'{path.name} is over {MAX_DOCUMENT_BYTES // (1024 * 1024)} MB.')
+    return Upload(kind=kind, filename=path.name, content=content,
+                  content_type=mimetypes.guess_type(path.name)[0] or 'application/octet-stream',
+                  checksum=base64.b64encode(hashlib.sha256(content).digest()).decode())
+
+
+async def staged(signature: Signature, domain_id: str, upload: Upload) -> StagedSource:
+    """The upload stored with Signature. Storage is reached at a presigned address, without the member's key."""
+    promised = await body_of(signature, 'POST', f'/domains/{domain_id}/documents/presign',
+                             json={'kind': upload.kind, 'filename': upload.filename,
+                                   'contentType': upload.content_type, 'size': len(upload.content),
+                                   'checksumSha256': upload.checksum})
+    try:
+        async with httpx2.AsyncClient(timeout=REQUEST_TIMEOUT_SECONDS) as storage:
+            stored = await storage.put(promised['url'], content=upload.content,
+                                       headers={'content-type': upload.content_type,
+                                                'x-amz-checksum-sha256': upload.checksum})
+    except httpx2.HTTPError as failure:
+        raise SignatureUnreachable() from failure
+    if stored.is_error:
+        raise SignatureRefused(f'Signature could not store {upload.filename}.')
+    return StagedSource(kind=upload.kind, filename=upload.filename, content_ref=promised['contentRef'])
+
+
+async def build(signature: Signature, domain_id: str, text: str | None, sources: list[StagedSource]) -> str:
+    """One build turn: what the member's Claude says and hands over. Its id, to follow with `outcome`."""
+    accepted = await body_of(signature, 'POST', f'/domains/{domain_id}/conversation/turns',
+                             json={'idempotencyKey': str(uuid.uuid4())} | ({'text': text} if text else {})
+                             | ({'sources': [{'kind': source.kind, 'filename': source.filename,
+                                                 'contentRef': source.content_ref} for source in sources]}
+                                if sources else {}))
+    return accepted['turn']['id']
+
+
+async def clarifying_questions(signature: Signature, domain_id: str) -> list[dict]:
+    return (await body_of(signature, 'GET', f'/domains/{domain_id}/conversation/clarifying-questions'))['questions']
+
+
+async def domain(signature: Signature, domain_id: str) -> dict:
+    return await body_of(signature, 'GET', f'/domains/{domain_id}')
+
+
+async def published_at(signature: Signature, domain_id: str) -> str | None:
+    """When the domain was last published, or None while it never has been."""
+    try:
+        return (await body_of(signature, 'GET', f'/domains/{domain_id}/publication'))['publishedAt']
+    except NotFound:
+        return None
