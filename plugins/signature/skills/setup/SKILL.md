@@ -22,7 +22,8 @@ ask only what you need from them, and do the rest with the Signature tools.
    dictionaries, notes. Use exactly the files they give you; don't search for more.
 
 4. **Build.** Call `build` with the document paths and, as `note`, anything the customer told you that
-   Signature should know. Tell the customer in a line what Signature did.
+   Signature should know. Tell the customer in one sentence what Signature built: at most the main kinds of
+   things, never every detail, which the review page shows.
 
 5. **Signature's questions.** When `build` returns questions, they are numbered. Answer the ones you can
    from what the customer said or gave you, with `from_customer` set to whether they told you. Ask the
@@ -33,6 +34,7 @@ ask only what you need from them, and do the rest with the Signature tools.
    publish it or say what's wrong. If they decline to open it, ask when they want to review. A requested
    change comes back as another build, so handle its questions and review again.
 
-7. **Ask.** Once published, the customer's questions go through `ask_question`. The answer is shown to
+7. **Ask.** Once published, tell the customer they can ask questions; don't invent example questions for
+   them. Their questions go through `ask_question`. The answer is shown to
    them directly; you can't see it, so don't guess or restate it. For a follow-up to the last question,
    set `follow_up`.

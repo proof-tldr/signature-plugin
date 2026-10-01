@@ -552,7 +552,8 @@ async def _followed(session: Session, build_id: str, ctx: Context[PluginState]) 
         state='built',
         reply=status.reply,
         open_questions=[],
-        note='Nothing is open. Tell the customer what Signature did, then call review.',
+        note='Nothing is open. Tell the customer in one sentence what Signature built, naming at most the main '
+        'kinds of things, never each detail: the review page shows those. Then call review.',
     )
 
 
@@ -577,7 +578,10 @@ async def _prepared(signature: Signature) -> Preparation | None:
 def _readiness(preparation: Preparation | None) -> str:
     """What to tell Claude about asking questions once the domain is published."""
     if preparation is None or preparation.state == 'succeeded':
-        return 'Published. The customer can now ask questions.'
+        return (
+            'Published. The customer can now ask questions. Do not suggest example questions of your own; let '
+            'the customer ask theirs.'
+        )
     if preparation.underway:
         return (
             'Published. Signature is still getting ready to answer questions; a question asked now waits for '
