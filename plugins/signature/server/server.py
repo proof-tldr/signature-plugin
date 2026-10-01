@@ -123,18 +123,23 @@ class SourceReported(TypedDict):
     tables: int
 
 
+async def report_local_source(domain_id: str, adapter: str, location: str, name: str) -> SourceReported:
+    """Reads the structure of what a location names on this machine and reports it to the domain under `name`."""
+    try:
+        structure = await catalog_readers.read_structure(adapter, location)
+    except catalog_readers.SourceNotUsable as unusable:
+        raise ToolError(str(unusable)) from unusable
+    await through_signature(lambda signature: signature_api.report_source(
+        signature, domain_id, structure.database, location=location, name=name))
+    return SourceReported(source=name, tables=structure.tables)
+
+
 @server.tool(description='Reports the structure (tables, columns, keys; never rows) of one of the user\'s local '
                          'Postgres databases to a domain. `service` is a connection service name the user defined '
                          'in their ~/.pg_service.conf; the plugin reads and sends the structure itself, and you '
                          'never see or write it.')
 async def report_source(domain_id: str, service: str) -> SourceReported:
-    try:
-        structure = await catalog_readers.read_structure('postgresql', service)
-    except catalog_readers.SourceNotUsable as unusable:
-        raise ToolError(str(unusable)) from unusable
-    await through_signature(lambda signature: signature_api.report_source(
-        signature, domain_id, service, structure.database, service))
-    return SourceReported(source=service, tables=structure.tables)
+    return await report_local_source(domain_id, 'postgresql', service, service)
 
 
 @server.tool(description='Reports the structure (files, their columns and inferred types; never rows) of csv, tsv, parquet, '
@@ -143,14 +148,7 @@ async def report_source(domain_id: str, service: str) -> SourceReported:
                          'itself, and you never see or write it; the user confirms the inferred types in the review.')
 async def report_files(domain_id: str, path: str) -> SourceReported:
     location = local_files.absolute_location(path)
-    try:
-        structure = await catalog_readers.read_structure('files', location)
-    except catalog_readers.SourceNotUsable as unusable:
-        raise ToolError(str(unusable)) from unusable
-    name = local_files.source_name_of(location)
-    await through_signature(lambda signature: signature_api.report_source(
-        signature, domain_id, location, structure.database, name))
-    return SourceReported(source=name, tables=structure.tables)
+    return await report_local_source(domain_id, 'files', location, local_files.source_name_of(location))
 
 
 @server.tool(description='Lists the questions Signature has asked about the domain and not yet had answered.')

@@ -227,7 +227,7 @@ def source_id_of(domain_id: str, location: str) -> str:
     return str(uuid.uuid5(uuid.NAMESPACE_URL, f'signature-plugin:source:{domain_id}:{location}'))
 
 
-async def report_source(signature: Signature, domain_id: str, location: str, database: dict, name: str) -> dict:
+async def report_source(signature: Signature, domain_id: str, database: dict, *, location: str, name: str) -> dict:
     """A source's structure, read on the member's machine, replacing what Signature held for that location (a service
     name, or an absolute path), reported under `name`."""
     source_id = source_id_of(domain_id, location)

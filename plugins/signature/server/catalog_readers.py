@@ -14,6 +14,7 @@ from psycopg.conninfo import make_conninfo
 from psycopg.rows import dict_row
 
 import local_files
+from local_files import LocalFile
 from catalog_report import (FileColumn, FileStructure, PostgresqlCatalogRows, files_database, postgresql_database,
                             table_count)
 
@@ -91,30 +92,29 @@ def load_extensions(connection: duckdb.DuckDBPyConnection, formats: set[str]) ->
         connection.execute(f'LOAD {extension}')
 
 
-def describe_file(connection: duckdb.DuckDBPyConnection, name: str, path: Path) -> FileStructure:
+def describe_file(connection: duckdb.DuckDBPyConnection, name: str, file: LocalFile) -> FileStructure:
     """One file's columns, from DuckDB's DESCRIBE of it: types are inferred from a sample of the file; no row leaves."""
-    format_name = local_files.format_of(path)
-    described = connection.execute(FILE_FORMATS[format_name].describe, [str(path)]).fetchall()
-    return FileStructure(name, format_name, [FileColumn(column, duckdb_type, nullable == 'YES')
-                                             for column, duckdb_type, nullable, *_ in described])
+    described = connection.execute(FILE_FORMATS[file.format].describe, [str(file.path)]).fetchall()
+    return FileStructure(name, [FileColumn(column, duckdb_type, nullable == 'YES')
+                                for column, duckdb_type, nullable, *_ in described])
 
 
-def describe_files(paths: list[Path]) -> list[FileStructure]:
-    names = local_files.names_of(paths)
+def describe_files(files: list[LocalFile]) -> list[FileStructure]:
+    names = local_files.names_of(files)
     connection = duckdb.connect()
     try:
-        load_extensions(connection, {local_files.format_of(path) for path in paths})
-        return [describe_file(connection, names[path], path) for path in paths]
+        load_extensions(connection, {file.format for file in files})
+        return [describe_file(connection, names[file.path], file) for file in files]
     finally:
         connection.close()
 
 
 async def read_files(location: str) -> dict:
     """The `database` of a reported source, from DuckDB's look at the structure of the files a location names."""
-    paths = local_files.files_at(location)
-    if not paths:
+    files = local_files.files_at(location)
+    if not files:
         raise SourceNotUsable(f'No csv, tsv, parquet, json or xlsx file found at {location}.')
-    return files_database(await asyncio.to_thread(describe_files, paths))
+    return files_database(await asyncio.to_thread(describe_files, files))
 
 
 @dataclass(frozen=True)

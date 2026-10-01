@@ -42,6 +42,6 @@ it. Then ask Claude to report the `shop` source. No credential is ever a tool ar
 
 `report_files` does the same for CSV, TSV, Parquet, JSON and Excel (.xlsx) files: Claude passes a file, a folder or a
 glob (`~/data/*.csv`), which is only where to look. [DuckDB](https://duckdb.org/docs/stable/guides/meta/describe) describes
-each file's columns on your machine; the plugin sends each file's name, format and column names, types and nullability,
-never a row, and Claude sees a table count. Types are inferred from a sample of each file and sent as inferred; you
+each file's columns on your machine; the plugin sends each file's name and column names, types and nullability,
+never a row, and Claude sees a table count. Types are inferred from a sample of each file and sent as DuckDB prints them (Signature refuses one it has no name for); you
 confirm them in the local review page. Excel reading downloads DuckDB's `excel` extension on first use.

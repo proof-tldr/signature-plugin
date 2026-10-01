@@ -29,11 +29,10 @@ def test_a_folder_of_files_is_read_for_its_structure_alone():
     columns = {file['name']: [(column['name'], column['nativeType']) for column in file['columns']]
                for file in structure.database['catalog']['files']}
     assert columns == {
-        'customers': [('id', 'bigint'), ('name', 'varchar'), ('placed', 'date')],
-        'events': [('id', 'bigint'), ('tags', 'list'), ('owner', 'struct')],
-        'orders': [('id', 'bigint'), ('amount', 'decimal')],
-        'prices': [('sku', 'varchar'), ('price', 'double')]}
-    assert {file['format'] for file in structure.database['catalog']['files']} == {'csv', 'json', 'parquet', 'tsv'}
+        'customers': [('id', 'BIGINT'), ('name', 'VARCHAR'), ('placed', 'DATE')],
+        'events': [('id', 'BIGINT'), ('tags', 'VARCHAR[]'), ('owner', 'STRUCT("name" VARCHAR)')],
+        'orders': [('id', 'BIGINT'), ('amount', 'DECIMAL(18,3)')],
+        'prices': [('sku', 'VARCHAR'), ('price', 'DOUBLE')]}
 
 
 def test_no_value_from_a_file_is_in_what_is_read():

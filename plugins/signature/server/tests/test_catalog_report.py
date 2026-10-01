@@ -1,6 +1,6 @@
 """A catalog's rows become the exact request body Signature takes, carrying structure only."""
 
-from catalog_report import (FileColumn, FileStructure, PostgresqlCatalogRows, duckdb_type_name, files_database,
+from catalog_report import (FileColumn, FileStructure, PostgresqlCatalogRows, files_database,
                             postgresql_database, table_count)
 
 ROWS = PostgresqlCatalogRows(
@@ -44,18 +44,11 @@ def test_tables_are_counted_across_schemas():
     assert table_count(EXPECTED) == 3
 
 
-def test_duckdb_types_become_the_names_signature_takes():
-    assert [duckdb_type_name(described) for described in
-            ['BIGINT', 'DECIMAL(18,3)', 'INTEGER[]', 'INTEGER[3]', 'STRUCT(a INTEGER)', 'TIMESTAMP_MS',
-             'TIMESTAMP WITH TIME ZONE', 'BIGNUM']] == [
-        'bigint', 'decimal', 'list', 'array', 'struct', 'timestamp', 'timestamp with time zone', 'varchar']
-
-
 def test_files_become_the_database_signature_takes():
-    files = [FileStructure('orders', 'parquet', [FileColumn('id', 'BIGINT', True), FileColumn('amount', 'DECIMAL(18,3)', True)])]
+    files = [FileStructure('orders', [FileColumn('id', 'BIGINT', True), FileColumn('amount', 'DECIMAL(18,3)', True)])]
 
     assert files_database(files) == {'adapter': 'files', 'catalog': {'files': [
-        {'name': 'orders', 'format': 'parquet', 'columns': [
-            {'name': 'id', 'nativeType': 'bigint', 'nullable': True},
-            {'name': 'amount', 'nativeType': 'decimal', 'nullable': True}]}]}}
+        {'name': 'orders', 'columns': [
+            {'name': 'id', 'nativeType': 'BIGINT', 'nullable': True},
+            {'name': 'amount', 'nativeType': 'DECIMAL(18,3)', 'nullable': True}]}]}}
     assert table_count(files_database(files)) == 1
