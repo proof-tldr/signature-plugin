@@ -18,7 +18,7 @@ from mcp.server.mcpserver import Context, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp_types import ElicitRequest, ElicitRequestURLParams, ElicitResult, InputRequiredResult, ToolAnnotations
 
-from signature_plugin import handoff, local_data, presentation
+from signature_plugin import handoff, presentation
 from signature_plugin.backend import (
     OpenQuestion,
     Signature,
@@ -27,7 +27,7 @@ from signature_plugin.backend import (
     connected,
 )
 from signature_plugin.examples import examples_of
-from signature_plugin.local_data import QueryRefused
+from signature_plugin.local_data import LocalData, QueryRefused
 from signature_plugin.pages import Page, Pages, Refusal
 from signature_plugin.progress import ProgressStore
 from signature_plugin.settings import NotConfigured, from_environment
@@ -108,6 +108,7 @@ class Asked(TypedDict):
 class PluginState:
     pages: Pages
     waiting_pages: dict[PagePurpose, Page[Any]]
+    local: LocalData
 
 
 @dataclass(frozen=True)
@@ -132,7 +133,11 @@ class Decided[T]:
 
 @asynccontextmanager
 async def _plugin_state(_server: MCPServer[PluginState]) -> AsyncGenerator[PluginState]:
-    yield PluginState(pages=Pages(), waiting_pages={})
+    local = LocalData()
+    try:
+        yield PluginState(pages=Pages(), waiting_pages={}, local=local)
+    finally:
+        local.close()
 
 
 server: MCPServer[PluginState] = MCPServer(
@@ -192,11 +197,12 @@ async def get_status() -> Status:
     ),
 )
 @_tool_errors
-async def add_data_files(paths: list[str]) -> list[Added]:
+async def add_data_files(paths: list[str], ctx: Context[PluginState]) -> list[Added]:
+    local = ctx.request_context.lifespan_context.local
     async with _session() as session:
         added = session.sources.add_files(paths)
         try:
-            return [await _checked(source) for source in added]
+            return [await _checked(local, session.sources, source) for source in added]
         except SourceRefused:
             for source in added:
                 session.sources.remove(source.name)
@@ -215,11 +221,12 @@ async def add_data_files(paths: list[str]) -> list[Added]:
 async def connect_database(
     ctx: Context[PluginState], suggested_name: str | None = None
 ) -> Added | NotDecided | InputRequiredResult:
+    local = ctx.request_context.lifespan_context.local
     async with _session() as session:
         sources = session.sources
 
     async def connected_from(form: dict[str, str]) -> DatabaseSource | Refusal:
-        return await _database_connected(sources, form)
+        return await _database_connected(local, sources, form)
 
     outcome = await _decision_on_page(
         ctx,
@@ -229,7 +236,7 @@ async def connect_database(
     )
     if not isinstance(outcome, Decided):
         return outcome
-    return await _checked(outcome.value)
+    return await _checked(local, sources, outcome.value)
 
 
 @server.tool(
@@ -270,7 +277,8 @@ async def build(
         contents = [await _document(path) for path in documents or []]
         if sources:
             await ctx.report_progress(0, message='Telling Signature about your data…')
-            await signature.report_catalog(await anyio.to_thread.run_sync(local_data.catalog, sources))
+            local = ctx.request_context.lifespan_context.local
+            await signature.report_catalog(await anyio.to_thread.run_sync(local.catalog, sources))
         await ctx.report_progress(0, message='Uploading your documents…')
         staged = [await signature.stage_document(name, content) for name, content in contents]
         build_id = await signature.start_build(note, staged)
@@ -339,7 +347,8 @@ async def review(ctx: Context[PluginState]) -> Reviewed | NotDecided | InputRequ
         async def review_page(pages: Pages) -> Page[ReviewDecision]:
             domain = await signature.domain()
             snapshot = await signature.model_snapshot()
-            cases = await anyio.to_thread.run_sync(examples_of, snapshot, session.sources.all())
+            local = ctx.request_context.lifespan_context.local
+            cases = await anyio.to_thread.run_sync(examples_of, snapshot, local, session.sources.all())
             data = {'page': 'review', 'domain': domain.name, 'snapshot': snapshot, 'examples': cases}
             return await pages.show(data, _review_decision)
 
@@ -373,7 +382,8 @@ async def ask_question(question: str, ctx: Context[PluginState], follow_up: bool
         signature, progress = session.signature, session.progress.load()
         if follow_up and progress.thread_id is None:
             raise ToolError('There is no earlier question to follow up on. Ask it with follow_up false.')
-        fingerprint = await anyio.to_thread.run_sync(local_data.fingerprint, session.sources.all())
+        local = ctx.request_context.lifespan_context.local
+        fingerprint = await anyio.to_thread.run_sync(local.fingerprint, session.sources.all())
         query_id = await signature.plan_query(question, progress.thread_id if follow_up else None, fingerprint)
         await ctx.report_progress(0, message='Signature is working out the query…')
         plan = await _waited(lambda: signature.query(query_id), lambda found: found.state == 'pending')
@@ -383,7 +393,7 @@ async def ask_question(question: str, ctx: Context[PluginState], follow_up: bool
         match plan.state:
             case 'planned' if plan.sql:
                 await ctx.report_progress(0, message='Running it on your data…')
-                result = await anyio.to_thread.run_sync(local_data.run, session.sources.all(), plan.sql)
+                result = await anyio.to_thread.run_sync(local.run, session.sources.all(), plan.sql)
                 handoff.leave(question, presentation.answer_text(plan.reading, result))
                 return Asked(state='shown', note='The answer was shown to the customer. You cannot see it.')
             case 'unanswerable':
@@ -414,12 +424,12 @@ async def _document(location: str) -> tuple[str, bytes]:
         raise ToolError(f'Could not read {location}: {failure.strerror}. Give an absolute path.') from failure
 
 
-async def _checked(source: Source) -> Added:
-    tables = await anyio.to_thread.run_sync(local_data.check, source)
+async def _checked(local: LocalData, sources: Sources, source: Source) -> Added:
+    tables = await anyio.to_thread.run_sync(local.check, sources.all(), source)
     return Added(source=source.name, tables=len(tables), columns=sum(table.columns for table in tables))
 
 
-async def _database_connected(sources: Sources, form: dict[str, str]) -> DatabaseSource | Refusal:
+async def _database_connected(local: LocalData, sources: Sources, form: dict[str, str]) -> DatabaseSource | Refusal:
     """The database the form describes, connected and kept; or why it could not be, for the page to show."""
     engine = 'mysql' if form.get('engine') == 'mysql' else 'postgres'
     try:
@@ -438,7 +448,7 @@ async def _database_connected(sources: Sources, form: dict[str, str]) -> Databas
         password=form.get('password', ''),
     )
     try:
-        await anyio.to_thread.run_sync(local_data.check, source)
+        await anyio.to_thread.run_sync(local.check, sources.all(), source)
     except SourceRefused as refused:
         sources.remove(source.name)
         return Refusal(str(refused))

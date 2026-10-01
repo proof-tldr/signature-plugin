@@ -10,7 +10,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from signature_plugin import local_data
+from signature_plugin.local_data import LocalData
 from signature_plugin.sources import Source
 
 PER_ITEM = 3
@@ -33,7 +33,7 @@ class Placed:
         return f"'{self.noun} ' || CAST({alias}.{self.identity} AS VARCHAR)"
 
 
-def examples_of(snapshot: dict[str, Any], sources: Sequence[Source]) -> dict[str, Any]:
+def examples_of(snapshot: dict[str, Any], local: LocalData, sources: Sequence[Source]) -> dict[str, Any]:
     """{things: {entity id: [labels]}, links: {field id: [[from label, to label]]}}, as far as the local data
     answers; a thing or relationship whose records cannot be found has no examples."""
     places = _places(snapshot)
@@ -50,7 +50,7 @@ def examples_of(snapshot: dict[str, Any], sources: Sequence[Source]) -> dict[str
                 f'JOIN {target.table} t ON CAST(o.{_quoted(column)} AS VARCHAR) = CAST(t.{target.identity} AS VARCHAR) '
                 f'LIMIT {PER_ITEM}'
             )
-    results = local_data.run_each(sources, [*thing_queries.values(), *link_queries.values()])
+    results = local.run_each(sources, [*thing_queries.values(), *link_queries.values()])
     thing_results, link_results = results[: len(thing_queries)], results[len(thing_queries) :]
     return {
         'things': {

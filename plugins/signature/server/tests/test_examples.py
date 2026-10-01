@@ -2,6 +2,7 @@ from pathlib import Path
 from typing import Any
 
 from signature_plugin.examples import examples_of
+from signature_plugin.local_data import LocalData
 from signature_plugin.sources import FileSource, Sources
 
 
@@ -66,12 +67,12 @@ def snapshot_for(customers_table: str) -> dict[str, Any]:
     }
 
 
-def test_examples_name_records_and_pair_related_ones(tmp_path: Path, data_files: Path) -> None:
+def test_examples_name_records_and_pair_related_ones(local: LocalData, tmp_path: Path, data_files: Path) -> None:
     sources: list[FileSource] = Sources(tmp_path / 'domain').add_files(
         [str(data_files / 'orders.csv'), str(data_files / 'customers.parquet')]
     )
 
-    found = examples_of(snapshot_for('memory.files.customers'), sources)
+    found = examples_of(snapshot_for('memory.files.customers'), local, sources)
 
     assert sorted(found['things']['customer']) == ['Acme', 'Globex']
     assert sorted(found['things']['order']) == ['Order 1', 'Order 2', 'Order 3']
@@ -83,10 +84,10 @@ def test_examples_name_records_and_pair_related_ones(tmp_path: Path, data_files:
     ]
 
 
-def test_a_thing_whose_records_are_not_here_has_no_examples(tmp_path: Path, data_files: Path) -> None:
+def test_a_thing_whose_records_are_not_here_has_no_examples(local: LocalData, tmp_path: Path, data_files: Path) -> None:
     sources: list[FileSource] = Sources(tmp_path / 'domain').add_files([str(data_files / 'orders.csv')])
 
-    found = examples_of(snapshot_for('memory.files.not_here'), sources)
+    found = examples_of(snapshot_for('memory.files.not_here'), local, sources)
 
     assert 'customer' not in found['things']
     assert found['links'] == {}

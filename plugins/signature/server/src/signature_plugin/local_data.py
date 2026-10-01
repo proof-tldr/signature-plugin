@@ -13,6 +13,7 @@ import threading
 from collections.abc import Generator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, TypedDict, cast
 
 import duckdb
@@ -74,40 +75,88 @@ class TableSummary:
     columns: int
 
 
-def check(source: Source) -> list[TableSummary]:
-    """The tables a source holds, opening it alone: a source that cannot be opened is refused, with why."""
-    with _opened([source]) as connection:
-        return [TableSummary(table['name'], len(table['columns'])) for table in _tables(connection, source)]
+class LocalData:
+    """The sources, opened together in one locked DuckDB that stays open between calls: each file is read into it
+    once, and the whole DuckDB opened again only when the sources change or a file changes on disk. Calls are made
+    one at a time, as one DuckDB connection serves them all."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._open: _Open | None = None
+
+    def check(self, sources: Sequence[Source], source: Source) -> list[TableSummary]:
+        """The tables one of the sources holds: a source that cannot be opened is refused, with why."""
+        with self._connection(sources) as connection:
+            return [TableSummary(table['name'], len(table['columns'])) for table in _tables(connection, source)]
+
+    def catalog(self, sources: Sequence[Source]) -> Catalog:
+        """Every source's tables, as the one DuckDB Signature's SQL runs on."""
+        with self._connection(sources) as connection:
+            tables = [table for source in sources for table in _tables(connection, source)]
+        return Catalog(fingerprint=_fingerprint(tables), tables=tables)
+
+    def fingerprint(self, sources: Sequence[Source]) -> str:
+        return self.catalog(sources)['fingerprint']
+
+    def run(self, sources: Sequence[Source], sql: str) -> Result:
+        """Signature's query over the sources, run if it is one SELECT over their tables, within the time and row
+        limits."""
+        with self._connection(sources) as connection:
+            return _ran(connection, sql)
+
+    def run_each(self, sources: Sequence[Source], queries: Sequence[str]) -> list[Result | None]:
+        """Each query's result, None for a query that was refused or failed."""
+        results: list[Result | None] = []
+        with self._connection(sources) as connection:
+            for sql in queries:
+                try:
+                    results.append(_ran(connection, sql))
+                except QueryRefused:
+                    results.append(None)
+        return results
+
+    def close(self) -> None:
+        with self._lock:
+            self._closed()
+
+    @contextmanager
+    def _connection(self, sources: Sequence[Source]) -> Generator[duckdb.DuckDBPyConnection]:
+        """The DuckDB of the sources as they are now: the one open, unless they or their files have changed since."""
+        state = _state(sources)
+        with self._lock:
+            if self._open is None or self._open.state != state:
+                self._closed()
+                self._open = _Open(state, _opened(sources))
+            yield self._open.connection
+
+    def _closed(self) -> None:
+        if self._open is not None:
+            self._open.connection.close()
+            self._open = None
 
 
-def catalog(sources: Sequence[Source]) -> Catalog:
-    """Every source's tables, opened together as the one DuckDB Signature's SQL will run on."""
-    with _opened(sources) as connection:
-        tables = [table for source in sources for table in _tables(connection, source)]
-    return Catalog(fingerprint=_fingerprint(tables), tables=tables)
+@dataclass(frozen=True)
+class _Open:
+    """A DuckDB opened on the sources, and their state when it was."""
+
+    state: tuple[object, ...]
+    connection: duckdb.DuckDBPyConnection
 
 
-def fingerprint(sources: Sequence[Source]) -> str:
-    return catalog(sources)['fingerprint']
+def _state(sources: Sequence[Source]) -> tuple[object, ...]:
+    """What the DuckDB opened on the sources depends on: each source as registered, and each file's size and last
+    change, or that it is missing."""
+    return tuple((source.model_dump_json(), _file_state(source)) for source in sources)
 
 
-def run(sources: Sequence[Source], sql: str) -> Result:
-    """Signature's query over the sources, run if it is one SELECT over their tables, within the time and row
-    limits."""
-    with _opened(sources) as connection:
-        return _ran(connection, sql)
-
-
-def run_each(sources: Sequence[Source], queries: Sequence[str]) -> list[Result | None]:
-    """Each query's result over one opening of the sources, None for a query that was refused or failed."""
-    results: list[Result | None] = []
-    with _opened(sources) as connection:
-        for sql in queries:
-            try:
-                results.append(_ran(connection, sql))
-            except QueryRefused:
-                results.append(None)
-    return results
+def _file_state(source: Source) -> tuple[int, int] | None:
+    if not isinstance(source, FileSource):
+        return None
+    try:
+        found = Path(source.path).stat()
+    except OSError:
+        return None
+    return found.st_mtime_ns, found.st_size
 
 
 def _ran(connection: duckdb.DuckDBPyConnection, sql: str) -> Result:
@@ -127,8 +176,7 @@ def _ran(connection: duckdb.DuckDBPyConnection, sql: str) -> Result:
     return Result(columns=columns, rows=rows[:MAX_RESULT_ROWS], truncated=len(rows) > MAX_RESULT_ROWS)
 
 
-@contextmanager
-def _opened(sources: Sequence[Source]) -> Generator[duckdb.DuckDBPyConnection]:
+def _opened(sources: Sequence[Source]) -> duckdb.DuckDBPyConnection:
     """All the sources in one DuckDB, locked: no file but theirs can be read, and nothing written anywhere."""
     connection = duckdb.connect(':memory:')
     try:
@@ -139,9 +187,10 @@ def _opened(sources: Sequence[Source]) -> Generator[duckdb.DuckDBPyConnection]:
         connection.execute('SET allowed_paths = ?', [allowed])
         connection.execute('SET enable_external_access = false')
         connection.execute('SET lock_configuration = true')
-        yield connection
-    finally:
+    except BaseException:
         connection.close()
+        raise
+    return connection
 
 
 def _attach(connection: duckdb.DuckDBPyConnection, source: Source) -> None:
