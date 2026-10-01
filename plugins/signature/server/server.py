@@ -123,7 +123,7 @@ class SourceReported(TypedDict):
     tables: int
 
 
-async def report_local_source(domain_id: str, adapter: str, location: str, name: str) -> SourceReported:
+async def report_local_source(domain_id: str, *, adapter: str, location: str, name: str) -> SourceReported:
     """Reads the structure of what a location names on this machine and reports it to the domain under `name`."""
     try:
         structure = await catalog_readers.read_structure(adapter, location)
@@ -139,7 +139,7 @@ async def report_local_source(domain_id: str, adapter: str, location: str, name:
                          'in their ~/.pg_service.conf; the plugin reads and sends the structure itself, and you '
                          'never see or write it.')
 async def report_source(domain_id: str, service: str) -> SourceReported:
-    return await report_local_source(domain_id, 'postgresql', service, service)
+    return await report_local_source(domain_id, adapter='postgresql', location=service, name=service)
 
 
 @server.tool(description='Reports the structure (files, their columns and inferred types; never rows) of csv, tsv, parquet, '
@@ -148,7 +148,8 @@ async def report_source(domain_id: str, service: str) -> SourceReported:
                          'itself, and you never see or write it; the user confirms the inferred types in the review.')
 async def report_files(domain_id: str, path: str) -> SourceReported:
     location = local_files.absolute_location(path)
-    return await report_local_source(domain_id, 'files', location, local_files.source_name_of(location))
+    return await report_local_source(domain_id, adapter='files', location=location,
+                                     name=local_files.source_name_of(location))
 
 
 @server.tool(description='Lists the questions Signature has asked about the domain and not yet had answered.')
