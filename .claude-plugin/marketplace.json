@@ -1,0 +1,14 @@
+{
+  "name": "signature",
+  "owner": {
+    "name": "Signature"
+  },
+  "plugins": [
+    {
+      "name": "signature",
+      "source": "./plugins/signature",
+      "description": "Ask questions about your Signature domains; answers print in your terminal and never reach the model."
+    }
+  ],
+  "description": "Signature for Claude Code."
+}

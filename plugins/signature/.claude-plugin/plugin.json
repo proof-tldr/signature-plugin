@@ -1,0 +1,17 @@
+{
+  "name": "signature",
+  "version": "0.1.0",
+  "description": "Signature's MCP server, with answers shown to you and withheld from the model.",
+  "author": {
+    "name": "Signature"
+  },
+  "userConfig": {
+    "api_key": {
+      "type": "string",
+      "title": "Signature API key",
+      "description": "Create one under Settings \u2192 API keys in Signature.",
+      "sensitive": true,
+      "required": true
+    }
+  }
+}

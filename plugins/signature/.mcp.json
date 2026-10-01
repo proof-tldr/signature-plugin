@@ -1,0 +1,9 @@
+{
+  "signature": {
+    "type": "http",
+    "url": "https://d2mzag8qoiv8gg.cloudfront.net/mcp",
+    "headers": {
+      "Authorization": "Bearer ${user_config.api_key}"
+    }
+  }
+}
