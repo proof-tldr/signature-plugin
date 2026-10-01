@@ -2,15 +2,16 @@
 Signature knows about, and a few pairs for each relationship between two things. People judge concrete cases far
 more reliably than general statements, and the rows never leave the machine.
 
-The model snapshot says which table each thing is read from, which columns identify a record and which column
-each detail is read from; this turns that into small SELECTs over the local sources."""
+The model snapshot says which table each thing is read from, by its name in the local DuckDB
+(`catalog.schema.name`, as the plugin reported it), which columns identify a record and which column each detail
+is read from; this turns that into small SELECTs over the local sources."""
 
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 
 from signature_plugin import local_data
-from signature_plugin.sources import FileSource, Source
+from signature_plugin.sources import Source
 
 PER_ITEM = 3
 NAMING_FIELDS = ('name', 'title', 'label', 'full_name', 'display_name')
@@ -32,12 +33,10 @@ class Placed:
         return f"'{self.noun} ' || CAST({alias}.{self.identity} AS VARCHAR)"
 
 
-def examples_of(
-    snapshot: dict[str, Any], sources: Sequence[Source], reported_id: Callable[[Source], str]
-) -> dict[str, Any]:
+def examples_of(snapshot: dict[str, Any], sources: Sequence[Source]) -> dict[str, Any]:
     """{things: {entity id: [labels]}, links: {field id: [[from label, to label]]}}, as far as the local data
     answers; a thing or relationship whose records cannot be found has no examples."""
-    places = _places(snapshot, sources, reported_id)
+    places = _places(snapshot)
     entities = {entity['name']: entity['id'] for entity in snapshot.get('entities', [])}
     thing_queries = {entity_id: _records(place) for entity_id, place in places.items()}
     link_queries: dict[str, str] = {}
@@ -72,10 +71,7 @@ def _records(place: Placed) -> str:
     return f'SELECT DISTINCT {label} FROM {place.table} t WHERE {label} IS NOT NULL LIMIT {PER_ITEM}'
 
 
-def _places(
-    snapshot: dict[str, Any], sources: Sequence[Source], reported_id: Callable[[Source], str]
-) -> dict[str, Placed]:
-    local = {reported_id(source): source for source in sources}
+def _places(snapshot: dict[str, Any]) -> dict[str, Placed]:
     tables = {table['id']: table for table in snapshot.get('databaseEntities', [])}
     columns = {column['id']: _column_name(column) for column in snapshot.get('columns', [])}
     fields = {field['id']: field for field in snapshot.get('fields', [])}
@@ -84,13 +80,12 @@ def _places(
     places: dict[str, Placed] = {}
     for mapping in snapshot.get('mappings', []):
         table = tables.get(mapping['databaseEntityId'])
-        source = table and local.get(table['sourceId'])
         identity = [columns[part['columnId']] for part in mapping.get('identity', []) if part['columnId'] in columns]
-        if not table or not source or not identity or mapping['entityId'] in places:
+        if not table or not identity or mapping['entityId'] in places:
             continue
         named_by = naming.get(mapping['id'])
         places[mapping['entityId']] = Placed(
-            table=_sql_name(source, table['relation']),
+            table='.'.join(_quoted(part) for part in table['relation'].split('.')),
             identity=_quoted(identity[0]),
             naming=_quoted(named_by) if named_by else None,
             noun=_words(entity_names[mapping['entityId']]).replace("'", "''"),
@@ -122,12 +117,6 @@ def _field_columns(snapshot: dict[str, Any]) -> dict[str, str]:
 def _column_name(column: dict[str, Any]) -> str:
     storage = column.get('storage', {})
     return storage.get('column') or column['name']
-
-
-def _sql_name(source: Source, relation: str) -> str:
-    if isinstance(source, FileSource):
-        return f'"files".{_quoted(source.name)}'
-    return '.'.join(_quoted(part) for part in (source.name, *relation.split('.')))
 
 
 def _leaf(type_expression: dict[str, Any]) -> str | None:

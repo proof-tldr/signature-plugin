@@ -72,7 +72,7 @@ async def test_setup_from_files_and_documents_to_published_answers(
         assert built['state'] == 'questions'
         [question] = built['open_questions']
         assert 'define the same term differently' in question['question']
-        assert plugin_environment.source_names() == {'orders', 'customers', 'products'}
+        assert plugin_environment.table_names() == {'orders', 'customers', 'products'}
         assert sorted(plugin_environment.documents.values()) == ['glossary.md', 'refund-policy.md']
 
         answered = await called(
@@ -186,8 +186,7 @@ async def test_a_database_connected_in_the_browser_is_reported(
         assert connected['source'] == 'sales_db'
         assert password not in json.dumps(await called(client, 'get_status'))
         await called(client, 'build')
-    tables = plugin_environment.catalog_named('sales_db')['tables']
-    assert expected_table in {table['sqlName'] for table in tables}
+    assert expected_table in {plugin_environment.sql_name(table) for table in plugin_environment.tables()}
 
 
 async def test_a_client_that_shows_links_is_asked_to_open_the_review(
@@ -243,3 +242,22 @@ async def test_a_mistake_is_told_with_what_to_do(
         result = await client.call_tool(tool, arguments)
     assert result.is_error
     assert told in str(result.content)
+
+
+async def test_a_question_after_the_sources_change_shape_asks_for_a_rebuild(
+    plugin_environment: FakeSignature, opened_pages: list[str], data_files: Path
+) -> None:
+    orders = data_files / 'orders.csv'
+    async with Client(server, raise_exceptions=True) as client:
+        await called(client, 'add_data_files', {'paths': [str(orders)]})
+        await called(client, 'build')
+        await called_through_page(client, 'review', opened_pages, {'decision': 'publish'})
+        assert (await called(client, 'ask_question', {'question': 'What did each status bring in?'}))[
+            'state'
+        ] == 'shown'
+
+        orders.write_text('id,customer_id,state,amount_cents\n1,1,paid,1000\n', encoding='utf-8')
+        asked = await called(client, 'ask_question', {'question': 'How many orders are there?'})
+
+    assert asked['state'] == 'stale'
+    assert 'Call build' in asked['note']

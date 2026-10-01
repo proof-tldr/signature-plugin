@@ -35,11 +35,27 @@ def test_a_file_that_is_not_data_is_refused(tmp_path: Path) -> None:
         Sources(tmp_path / 'domain').add_files([str(notes)])
 
 
-def test_the_catalog_names_each_table_as_signature_must_query_it(sources: list[FileSource]) -> None:
-    [table] = local_data.catalogs(sources)['orders']['tables']
-    assert table['sqlName'] == '"files"."orders"'
-    status = next(column for column in table['columns'] if column['name'] == 'status')
-    assert sorted(status['examples']) == ['paid', 'refunded']
+def test_one_catalog_describes_every_source_by_its_duckdb_name_and_no_values(sources: list[FileSource]) -> None:
+    catalog = local_data.catalog(sources)
+
+    names = {(table['catalog'], table['schema'], table['name']) for table in catalog['tables']}
+    assert names == {('memory', 'files', 'orders'), ('memory', 'files', 'customers'), ('memory', 'files', 'products')}
+    orders = next(table for table in catalog['tables'] if table['name'] == 'orders')
+    assert {'name': 'status', 'nativeType': 'VARCHAR', 'nullable': True} in orders['columns']
+    assert 'paid' not in str(catalog)
+    assert local_data.run(sources, 'SELECT count(*) FROM "memory"."files"."orders"').rows == [(3,)]
+
+
+def test_the_fingerprint_follows_the_structure_not_the_rows(tmp_path: Path, data_files: Path) -> None:
+    orders = data_files / 'orders.csv'
+    sources = Sources(tmp_path / 'domain').add_files([str(orders)])
+    before = local_data.fingerprint(sources)
+
+    orders.write_text(orders.read_text(encoding='utf-8') + '4,2,paid,900\n', encoding='utf-8')
+    assert local_data.fingerprint(sources) == before
+
+    orders.write_text('id,customer_id,state,amount_cents\n1,1,paid,1000\n', encoding='utf-8')
+    assert local_data.fingerprint(sources) != before
 
 
 def test_every_format_can_be_queried(sources: list[FileSource]) -> None:

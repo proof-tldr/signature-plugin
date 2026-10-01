@@ -33,8 +33,11 @@ class FakeSignature:
     domain_name: str = 'Demo domain'
     published_at: str | None = None
     documents: dict[str, str] = field(default_factory=dict[str, str])
-    # Each reported source's name and catalog, by the id it was reported under.
-    catalogs: dict[str, tuple[str, dict[str, Any]]] = field(default_factory=dict[str, tuple[str, dict[str, Any]]])
+    # The customer's local DuckDB as last reported: its source id and catalog, and the catalog's fingerprint as
+    # it was when the domain was last published.
+    source_id: str | None = None
+    catalog: dict[str, Any] | None = None
+    published_fingerprint: str | None = None
     turns: dict[str, dict[str, Any]] = field(default_factory=dict[str, dict[str, Any]])
     questions: dict[str, dict[str, Any]] = field(default_factory=dict[str, dict[str, Any]])
     queries: dict[str, dict[str, Any]] = field(default_factory=dict[str, dict[str, Any]])
@@ -90,13 +93,13 @@ class FakeSignature:
 
     async def report_catalog(self, request: Request) -> Response:
         body = await request.json()
-        self.catalogs[request.path_params['source_id']] = (body['name'], body['database']['catalog'])
+        self.source_id, self.catalog = request.path_params['source_id'], body['database']['catalog']
         return JSONResponse({'sourceId': request.path_params['source_id']})
 
     async def start_turn(self, request: Request) -> Response:
         body = await request.json()
         documents = [source['filename'] for source in body.get('sources', [])]
-        parts = [f'{len(self.catalogs)} source(s)'] + ([f'{len(documents)} document(s)'] if documents else [])
+        parts = [f'{len(self.tables())} table(s)'] + ([f'{len(documents)} document(s)'] if documents else [])
         reply = f'Built the domain from {" and ".join(parts)}.'
         if len(documents) >= 2 and not self.asked_about_documents:
             self.asked_about_documents = True
@@ -130,56 +133,60 @@ class FakeSignature:
             key: []
             for key in ('entities', 'fields', 'sources', 'databaseEntities', 'columns', 'mappings', 'mappingFields')
         }
-        for source_id, (source, catalog) in self.catalogs.items():
-            model['sources'].append({'id': source_id, 'kind': 'duckdb', 'connection': source})
-            for table in catalog['tables']:
-                entity_id, table_id, mapping_id = str(uuid.uuid4()), str(uuid.uuid4()), str(uuid.uuid4())
-                model['entities'].append({'id': entity_id, 'name': table['name'].title(), 'invariants': []})
-                model['databaseEntities'].append({'id': table_id, 'sourceId': source_id, 'relation': table['name']})
-                identity: list[dict[str, str]] = []
-                for column in table['columns']:
-                    field_id, column_id = str(uuid.uuid4()), str(uuid.uuid4())
-                    model['fields'].append(
-                        {
-                            'id': field_id,
-                            'entityId': entity_id,
-                            'name': column['name'],
-                            'type': {'kind': 'named', 'name': column['type'].lower()},
-                        }
-                    )
-                    model['columns'].append(
-                        {
-                            'id': column_id,
-                            'databaseEntityId': table_id,
-                            'name': column['name'],
-                            'storage': {'kind': 'column', 'column': column['name']},
-                        }
-                    )
-                    model['mappingFields'].append(
-                        {
-                            'id': str(uuid.uuid4()),
-                            'mappingId': mapping_id,
-                            'columnId': column_id,
-                            'target': {'kind': 'field', 'fieldId': field_id},
-                        }
-                    )
-                    if column['primaryKey'] or not identity:
-                        identity = [{'columnId': column_id, 'name': column['name']}]
-                model['mappings'].append(
-                    {'id': mapping_id, 'entityId': entity_id, 'databaseEntityId': table_id, 'identity': identity}
+        if self.source_id:
+            model['sources'].append({'id': self.source_id, 'kind': 'duckdb', 'connection': 'Your data'})
+        for table in self.tables():
+            entity_id, table_id, mapping_id = str(uuid.uuid4()), str(uuid.uuid4()), str(uuid.uuid4())
+            model['entities'].append({'id': entity_id, 'name': table['name'].title(), 'invariants': []})
+            relation = f'{table["catalog"]}.{table["schema"]}.{table["name"]}'
+            model['databaseEntities'].append({'id': table_id, 'sourceId': self.source_id, 'relation': relation})
+            identity: list[dict[str, str]] = []
+            for column in table['columns']:
+                field_id, column_id = str(uuid.uuid4()), str(uuid.uuid4())
+                model['fields'].append(
+                    {
+                        'id': field_id,
+                        'entityId': entity_id,
+                        'name': column['name'],
+                        'type': {'kind': 'named', 'name': column['nativeType'].lower()},
+                    }
                 )
+                model['columns'].append(
+                    {
+                        'id': column_id,
+                        'databaseEntityId': table_id,
+                        'name': column['name'],
+                        'storage': {'kind': 'column', 'column': column['name']},
+                    }
+                )
+                model['mappingFields'].append(
+                    {
+                        'id': str(uuid.uuid4()),
+                        'mappingId': mapping_id,
+                        'columnId': column_id,
+                        'target': {'kind': 'field', 'fieldId': field_id},
+                    }
+                )
+                if column['name'] in table['primaryKey'] or not identity:
+                    identity = [{'columnId': column_id, 'name': column['name']}]
+            model['mappings'].append(
+                {'id': mapping_id, 'entityId': entity_id, 'databaseEntityId': table_id, 'identity': identity}
+            )
         return JSONResponse(model | {'functions': [], 'axioms': []})
 
     async def publish(self, _request: Request) -> Response:
         self.published_at = datetime.now(UTC).isoformat()
+        self.published_fingerprint = self.catalog['fingerprint'] if self.catalog else None
         return JSONResponse({'publishedAt': self.published_at})
 
     async def plan_query(self, request: Request) -> Response:
         body = await request.json()
         query_id = str(uuid.uuid4())
         canned = self.canned_queries.get(body['question'])
-        first_table = next((t['sqlName'] for _, c in self.catalogs.values() for t in c['tables']), None)
-        if canned:
+        first_table = next((self.sql_name(table) for table in self.tables()), None)
+        if self.published_fingerprint and body.get('fingerprint') != self.published_fingerprint:
+            plan = {'state': 'stale', 'reason': 'the sources changed shape after publishing'}
+        elif canned:
             plan = {'state': 'planned', 'reading': canned['reading'], 'sql': canned['sql']}
         elif first_table:
             plan = {
@@ -196,11 +203,15 @@ class FakeSignature:
         query = self.queries.get(request.path_params['query_id'])
         return JSONResponse(query) if query else _problem(404, 'Unknown query')
 
-    def catalog_named(self, name: str) -> dict[str, Any]:
-        return next(catalog for source, catalog in self.catalogs.values() if source == name)
+    def tables(self) -> list[dict[str, Any]]:
+        return self.catalog['tables'] if self.catalog else []
 
-    def source_names(self) -> set[str]:
-        return {source for source, _ in self.catalogs.values()}
+    def table_names(self) -> set[str]:
+        return {table['name'] for table in self.tables()}
+
+    @staticmethod
+    def sql_name(table: dict[str, Any]) -> str:
+        return '.'.join(f'"{part}"' for part in (table['catalog'], table['schema'], table['name']))
 
     def _turn(self, reply: str) -> dict[str, Any]:
         turn_id = str(uuid.uuid4())

@@ -24,7 +24,6 @@ export type Snapshot = {
     post?: Statement[]
   }[]
   axioms?: Statement[]
-  sources?: { id: string; kind?: string; connection?: string; namespace?: string; file?: string }[]
   databaseEntities?: { id: string; sourceId: string; relation: string }[]
   mappings?: { id: string; entityId: string; databaseEntityId: string }[]
 }
@@ -213,17 +212,17 @@ function entityOf(id: string, entities: Entity[]): Entity {
   return entities.find((entity) => entity.id === id)!
 }
 
-// Where each thing's records come from, as "the orders table in your sales database" or "products.csv".
+// Where each thing's records come from, read off its table's name in the customer's local DuckDB
+// ("catalog.schema.name"): "the orders table in your sales database", or "your products file" for a data file,
+// which lives in DuckDB's own in-memory catalog.
 function originsOf(snapshot: Snapshot): Map<string, string> {
-  const sources = new Map((snapshot.sources ?? []).map((source) => [source.id, source]))
-  const tables = new Map((snapshot.databaseEntities ?? []).map((table) => [table.id, table]))
+  const tables = new Map((snapshot.databaseEntities ?? []).map((table) => [table.id, table.relation]))
   const origins = new Map<string, string>()
   for (const mapping of snapshot.mappings ?? []) {
-    const table = tables.get(mapping.databaseEntityId)
-    const source = table && sources.get(table.sourceId)
-    if (!table || !source) continue
-    const tableName = table.relation.split('.').at(-1) ?? table.relation
-    const place = source.file || `the ${words(tableName)} table in your ${source.connection ?? source.namespace ?? ''} database`
+    const relation = tables.get(mapping.databaseEntityId)
+    if (!relation) continue
+    const [catalog = '', , name = relation] = relation.split('.')
+    const place = catalog === 'memory' ? `your ${words(name)} file` : `the ${words(name)} table in your ${catalog} database`
     const earlier = origins.get(mapping.entityId)
     origins.set(mapping.entityId, earlier ? `${earlier} and ${place}` : place)
   }

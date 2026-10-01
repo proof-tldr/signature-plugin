@@ -46,9 +46,8 @@ match (statuses, region names) are written into the domain's notes by hand; the 
 
 ## Source catalog: one `duckdb` catalog (new, Signature-Platform #240)
 
-**Target; the plugin still reports one catalog per source with the older field names below until it is
-switched over.** Reported on every build under one fixed `sourceId` per domain, replacing the previous one, with
-`database: {adapter: "duckdb", catalog}`:
+Reported on every build under one fixed `sourceId` per domain (named "Your data"), replacing the previous one,
+with `database: {adapter: "duckdb", catalog}`:
 
 ```json
 {"fingerprint": "sha256 of the tables below",
@@ -62,7 +61,10 @@ switched over.** Reported on every build under one fixed `sourceId` per domain, 
  ]}
 ```
 
-- A table's SQL name is `"catalog"."schema"."name"`; data files are `"files"."<name>"`.
+- A table's SQL name is always `"catalog"."schema"."name"`. Data files live in DuckDB's own in-memory catalog,
+  `"memory"."files"."<name>"`; an attached database's tables are `"<source>"."<schema>"."<table>"`.
+- In the model snapshot, a table's `relation` is that same name unquoted, `catalog.schema.name`. The review page
+  reads where each thing comes from off it, and the plugin queries it for real examples.
 - `nativeType` is DuckDB's type name, whatever the source's own type was.
 - No values from the data.
 

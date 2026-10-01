@@ -8,7 +8,6 @@ follow-up continues, and numbers Signature's open questions."""
 import asyncio
 import functools
 import os
-import uuid
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -101,7 +100,7 @@ class Reviewed(TypedDict):
 
 
 class Asked(TypedDict):
-    state: Literal['shown', 'unanswerable']
+    state: Literal['shown', 'unanswerable', 'stale']
     note: str
 
 
@@ -269,10 +268,9 @@ async def build(
                 'connect_database, or pass their documents.'
             )
         contents = [await _document(path) for path in documents or []]
-        await ctx.report_progress(0, message='Telling Signature about your data…')
-        catalogs = await anyio.to_thread.run_sync(local_data.catalogs, sources)
-        for source in sources:
-            await signature.report_source(_source_id(signature, source), source.name, catalogs[source.name])
+        if sources:
+            await ctx.report_progress(0, message='Telling Signature about your data…')
+            await signature.report_catalog(await anyio.to_thread.run_sync(local_data.catalog, sources))
         await ctx.report_progress(0, message='Uploading your documents…')
         staged = [await signature.stage_document(name, content) for name, content in contents]
         build_id = await signature.start_build(note, staged)
@@ -341,9 +339,7 @@ async def review(ctx: Context[PluginState]) -> Reviewed | NotDecided | InputRequ
         async def review_page(pages: Pages) -> Page[ReviewDecision]:
             domain = await signature.domain()
             snapshot = await signature.model_snapshot()
-            cases = await anyio.to_thread.run_sync(
-                lambda: examples_of(snapshot, session.sources.all(), lambda source: _source_id(signature, source))
-            )
+            cases = await anyio.to_thread.run_sync(examples_of, snapshot, session.sources.all())
             data = {'page': 'review', 'domain': domain.name, 'snapshot': snapshot, 'examples': cases}
             return await pages.show(data, _review_decision)
 
@@ -377,7 +373,8 @@ async def ask_question(question: str, ctx: Context[PluginState], follow_up: bool
         signature, progress = session.signature, session.progress.load()
         if follow_up and progress.thread_id is None:
             raise ToolError('There is no earlier question to follow up on. Ask it with follow_up false.')
-        query_id = await signature.plan_query(question, progress.thread_id if follow_up else None)
+        fingerprint = await anyio.to_thread.run_sync(local_data.fingerprint, session.sources.all())
+        query_id = await signature.plan_query(question, progress.thread_id if follow_up else None, fingerprint)
         await ctx.report_progress(0, message='Signature is working out the query…')
         plan = await _waited(lambda: signature.query(query_id), lambda found: found.state == 'pending')
         if plan is None:
@@ -394,6 +391,15 @@ async def ask_question(question: str, ctx: Context[PluginState], follow_up: bool
                 return Asked(
                     state='unanswerable',
                     note='Signature could not answer this from the domain, and the customer was told why.',
+                )
+            case 'stale':
+                handoff.leave(
+                    question, 'Your data has changed shape since Signature was published, so it needs updating.'
+                )
+                return Asked(
+                    state='stale',
+                    note="The customer's tables or columns changed after publishing. Call build, then review so "
+                    'they can publish again, then ask again.',
                 )
             case _:
                 raise ToolError('Signature could not work out a query for this question.')
@@ -554,11 +560,6 @@ def _attributed(given: Answer) -> str:
     if given['from_customer']:
         return given['answer']
     return f'(Inferred, not confirmed by the customer) {given["answer"]}'
-
-
-def _source_id(signature: Signature, source: Source) -> str:
-    """The id Signature knows a source by, the same on every build so a new report replaces the last."""
-    return str(uuid.uuid5(uuid.NAMESPACE_URL, f'signature-plugin:{signature.domain_id}:{source.name}'))
 
 
 def _summary(source: Source) -> SourceSummary:

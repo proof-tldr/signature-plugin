@@ -16,6 +16,8 @@ from signature_plugin.settings import Settings
 
 REQUEST_TIMEOUT_SECONDS = 30.0
 MAX_DOCUMENT_BYTES = 5 * 1024 * 1024
+# What the customer's local DuckDB is called as a source in Signature.
+LOCAL_SOURCE_NAME = 'Your data'
 # Signature asks what kind of document each is; the plugin hands documents over as they are, unclassified.
 DOCUMENT_KIND = 'notes'
 
@@ -58,7 +60,7 @@ class OpenQuestion:
     suggested_answers: list[str]
 
 
-type QueryState = Literal['pending', 'planned', 'unanswerable', 'failed']
+type QueryState = Literal['pending', 'planned', 'unanswerable', 'stale', 'failed']
 
 
 @dataclass(frozen=True)
@@ -113,13 +115,15 @@ class Signature:
             raise SignatureRefused(f'Signature could not store {filename}.')
         return StagedDocument(filename=filename, content_ref=promised['contentRef'])
 
-    async def report_source(self, source_id: str, name: str, catalog: Mapping[str, object]) -> None:
-        """A source's structure, replacing whatever Signature held for it before."""
+    async def report_catalog(self, catalog: Mapping[str, object]) -> None:
+        """The structure of the customer's whole local DuckDB, replacing what Signature held for it before. It is
+        one source, under an id fixed for the domain, so each build replaces the last report."""
+        source_id = uuid.uuid5(uuid.NAMESPACE_URL, f'signature-plugin:{self.domain_id}:local-duckdb')
         await _body(
             self._client,
             'PUT',
             f'/domains/{self.domain_id}/model/sources/{source_id}/catalog',
-            json={'name': name, 'database': {'adapter': 'duckdb', 'catalog': catalog}},
+            json={'name': LOCAL_SOURCE_NAME, 'database': {'adapter': 'duckdb', 'catalog': catalog}},
         )
 
     async def start_build(self, text: str | None, documents: list[StagedDocument]) -> str:
@@ -165,8 +169,9 @@ class Signature:
     async def publish(self) -> None:
         await _body(self._client, 'POST', f'/domains/{self.domain_id}/publish', json={})
 
-    async def plan_query(self, question: str, thread_id: str | None) -> str:
-        """The question handed to Signature to plan; the id of its query."""
+    async def plan_query(self, question: str, thread_id: str | None, fingerprint: str) -> str:
+        """The question handed to Signature to plan, with the fingerprint of the customer's sources as they are
+        now, so Signature can tell they have changed since publishing; the id of its query."""
         accepted = await _body(
             self._client,
             'POST',
@@ -175,6 +180,7 @@ class Signature:
                 'idempotencyKey': str(uuid.uuid4()),
                 'question': question,
                 'threadId': thread_id or str(uuid.uuid4()),
+                'fingerprint': fingerprint,
             },
         )
         return accepted['id']

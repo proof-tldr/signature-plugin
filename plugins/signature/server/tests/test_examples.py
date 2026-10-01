@@ -2,12 +2,12 @@ from pathlib import Path
 from typing import Any
 
 from signature_plugin.examples import examples_of
-from signature_plugin.sources import FileSource, Source, Sources
+from signature_plugin.sources import FileSource, Sources
 
 
-def snapshot_for(orders_id: str, customers_id: str) -> dict[str, Any]:
-    """Orders read from orders.csv, customers from customers.parquet, and each order's customer read from its
-    customer_id column, which holds a customer's id."""
+def snapshot_for(customers_table: str) -> dict[str, Any]:
+    """Orders read from orders.csv, customers from the named table, and each order's customer read from its
+    customer_id column, which holds a customer's id. Tables are named as the local DuckDB names them."""
     return {
         'entities': [{'id': 'order', 'name': 'Order'}, {'id': 'customer', 'name': 'Customer'}],
         'fields': [
@@ -24,10 +24,10 @@ def snapshot_for(orders_id: str, customers_id: str) -> dict[str, Any]:
                 'type': {'kind': 'named', 'name': 'string'},
             },
         ],
-        'sources': [{'id': orders_id}, {'id': customers_id}],
+        'sources': [{'id': 'local'}],
         'databaseEntities': [
-            {'id': 'orders-table', 'sourceId': orders_id, 'relation': 'orders'},
-            {'id': 'customers-table', 'sourceId': customers_id, 'relation': 'customers'},
+            {'id': 'orders-table', 'sourceId': 'local', 'relation': 'memory.files.orders'},
+            {'id': 'customers-table', 'sourceId': 'local', 'relation': customers_table},
         ],
         'columns': [
             {'id': 'orders.id', 'name': 'id', 'storage': {'kind': 'column', 'column': 'id'}},
@@ -66,16 +66,12 @@ def snapshot_for(orders_id: str, customers_id: str) -> dict[str, Any]:
     }
 
 
-def reported_id(source: Source) -> str:
-    return f'reported-{source.name}'
-
-
 def test_examples_name_records_and_pair_related_ones(tmp_path: Path, data_files: Path) -> None:
     sources: list[FileSource] = Sources(tmp_path / 'domain').add_files(
         [str(data_files / 'orders.csv'), str(data_files / 'customers.parquet')]
     )
 
-    found = examples_of(snapshot_for('reported-orders', 'reported-customers'), sources, reported_id)
+    found = examples_of(snapshot_for('memory.files.customers'), sources)
 
     assert sorted(found['things']['customer']) == ['Acme', 'Globex']
     assert sorted(found['things']['order']) == ['Order 1', 'Order 2', 'Order 3']
@@ -90,7 +86,7 @@ def test_examples_name_records_and_pair_related_ones(tmp_path: Path, data_files:
 def test_a_thing_whose_records_are_not_here_has_no_examples(tmp_path: Path, data_files: Path) -> None:
     sources: list[FileSource] = Sources(tmp_path / 'domain').add_files([str(data_files / 'orders.csv')])
 
-    found = examples_of(snapshot_for('reported-orders', 'somewhere-else'), sources, reported_id)
+    found = examples_of(snapshot_for('memory.files.not_here'), sources)
 
     assert 'customer' not in found['things']
     assert found['links'] == {}

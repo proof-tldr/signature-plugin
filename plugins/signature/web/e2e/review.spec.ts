@@ -15,7 +15,7 @@ test('picking a thing in the diagram opens its row', async ({ page }) => {
 
   const row = page.getByRole('button', { name: /^Products/ })
   await expect(row).toHaveAttribute('aria-expanded', 'true')
-  await expect(page.getByText('From products.csv')).toBeVisible()
+  await expect(page.getByText('From your products file')).toBeVisible()
 })
 
 test('publishing asks first, says who sees it, then confirms', async ({ page }) => {

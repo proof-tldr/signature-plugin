@@ -45,16 +45,12 @@ export function samplePage(query: URLSearchParams): PageData {
       ],
       axioms: [statement('a1', 'An order is refunded only after it has been paid.'),
                statement('a2', 'A customer\'s region does not change.')],
-      sources: [
-        { id: 's1', kind: 'PostgreSQL', connection: 'sales' },
-        { id: 's2', kind: 'CSV file', file: 'products.csv' },
-      ],
       databaseEntities: [
-        { id: 't1', sourceId: 's1', relation: 'public.customers' },
-        { id: 't2', sourceId: 's1', relation: 'public.orders' },
-        { id: 't3', sourceId: 's1', relation: 'public.order_lines' },
-        { id: 't4', sourceId: 's1', relation: 'public.regions' },
-        { id: 't5', sourceId: 's2', relation: 'products' },
+        { id: 't1', sourceId: 'local', relation: 'sales.public.customers' },
+        { id: 't2', sourceId: 'local', relation: 'sales.public.orders' },
+        { id: 't3', sourceId: 'local', relation: 'sales.public.order_lines' },
+        { id: 't4', sourceId: 'local', relation: 'sales.public.regions' },
+        { id: 't5', sourceId: 'local', relation: 'memory.files.products' },
       ],
       mappings: [
         { id: 'm1', entityId: 'c', databaseEntityId: 't1' },

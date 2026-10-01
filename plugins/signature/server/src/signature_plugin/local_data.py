@@ -2,9 +2,11 @@
 attached read-only. It reports their structure and runs Signature's queries, locked so that a query can read
 only those sources and change nothing.
 
-Each file is the view `files.<source>`; each database is the catalog `<source>`, its tables at
-`<source>.<schema>.<table>`. Signature's SQL names them that way."""
+Every table is named `"catalog"."schema"."name"`: a file is the view `"memory"."files"."<source>"` in DuckDB's own
+in-memory catalog, and a database's tables are `"<source>"."<schema>"."<table>"`. Signature is told the whole
+DuckDB as one catalog, and its SQL names tables that way."""
 
+import hashlib
 import json
 import threading
 from collections.abc import Generator, Sequence
@@ -20,9 +22,6 @@ from signature_plugin.sources import DatabaseSource, FileFormat, FileSource, Sou
 FILES_DATABASE = 'memory'
 FILES_SCHEMA = 'files'
 SYSTEM_SCHEMAS = {'information_schema', 'pg_catalog', 'mysql', 'performance_schema', 'sys'}
-SAMPLE_ROWS = 1000
-SAMPLE_VALUES = 5
-SAMPLE_TEXT_LENGTH = 80
 QUERY_TIMEOUT_SECONDS = 120.0
 # Each file format's DuckDB reader, and the extension it needs loaded before the connection is locked.
 FILE_READERS: dict[FileFormat, tuple[str, str | None]] = {
@@ -49,20 +48,22 @@ class Result:
 
 class Column(TypedDict):
     name: str
-    type: str
+    nativeType: str
     nullable: bool
-    primaryKey: bool
-    examples: list[str]
 
 
 class Table(TypedDict):
+    catalog: str
     schema: str
     name: str
-    sqlName: str
     columns: list[Column]
+    primaryKey: list[str]
 
 
+# The whole local DuckDB as Signature is told it: every table's structure, never a value from the data, and a
+# fingerprint of that structure, so a package built for it can tell when the sources have since changed shape.
 class Catalog(TypedDict):
+    fingerprint: str
     tables: list[Table]
 
 
@@ -75,14 +76,18 @@ class TableSummary:
 def check(source: Source) -> list[TableSummary]:
     """The tables a source holds, opening it alone: a source that cannot be opened is refused, with why."""
     with _opened([source]) as connection:
-        return [TableSummary(table['name'], len(table['columns'])) for table in _tables(connection, source, 0)]
+        return [TableSummary(table['name'], len(table['columns'])) for table in _tables(connection, source)]
 
 
-def catalogs(sources: Sequence[Source]) -> dict[str, Catalog]:
-    """What Signature is told about each source, by name: its tables, their columns, types and keys, and a few
-    example values per column, so it can see what codes and formats the data uses. Never whole rows."""
+def catalog(sources: Sequence[Source]) -> Catalog:
+    """Every source's tables, opened together as the one DuckDB Signature's SQL will run on."""
     with _opened(sources) as connection:
-        return {source.name: Catalog(tables=_tables(connection, source, SAMPLE_VALUES)) for source in sources}
+        tables = [table for source in sources for table in _tables(connection, source)]
+    return Catalog(fingerprint=_fingerprint(tables), tables=tables)
+
+
+def fingerprint(sources: Sequence[Source]) -> str:
+    return catalog(sources)['fingerprint']
 
 
 def run(sources: Sequence[Source], sql: str) -> Result:
@@ -162,8 +167,7 @@ def _attach(connection: duckdb.DuckDBPyConnection, source: Source) -> None:
         raise SourceRefused(f'{source.name} could not be opened: {failure}') from failure
 
 
-def _tables(connection: duckdb.DuckDBPyConnection, source: Source, examples_per_column: int) -> list[Table]:
-    """The source's tables, with up to that many example values for each column."""
+def _tables(connection: duckdb.DuckDBPyConnection, source: Source) -> list[Table]:
     match source:
         case FileSource():
             database = FILES_DATABASE
@@ -180,43 +184,27 @@ def _tables(connection: duckdb.DuckDBPyConnection, source: Source, examples_per_
     keys = _primary_keys(connection, database)
     tables: dict[tuple[str, str], Table] = {}
     for schema, table, column, data_type, nullable in columns:
-        sql_name = _sql_name(database, schema, table)
-        entry = tables.setdefault((schema, table), Table(schema=schema, name=table, sqlName=sql_name, columns=[]))
-        entry['columns'].append(
-            Column(
-                name=column,
-                type=data_type,
-                nullable=nullable,
-                primaryKey=column in keys.get((schema, table), set()),
-                examples=_examples(connection, sql_name, column, examples_per_column),
-            )
+        entry = tables.setdefault(
+            (schema, table),
+            Table(catalog=database, schema=schema, name=table, columns=[], primaryKey=keys.get((schema, table), [])),
         )
+        entry['columns'].append(Column(name=column, nativeType=data_type, nullable=nullable))
     return list(tables.values())
 
 
-def _primary_keys(connection: duckdb.DuckDBPyConnection, database: str) -> dict[tuple[str, str], set[str]]:
+def _fingerprint(tables: list[Table]) -> str:
+    """The same for the same structure however it was listed, and different for any change to it."""
+    ordered = sorted(tables, key=lambda table: (table['catalog'], table['schema'], table['name']))
+    return hashlib.sha256(json.dumps(ordered, sort_keys=True).encode()).hexdigest()
+
+
+def _primary_keys(connection: duckdb.DuckDBPyConnection, database: str) -> dict[tuple[str, str], list[str]]:
     rows = connection.execute(
         """SELECT schema_name, table_name, constraint_column_names FROM duckdb_constraints()
            WHERE database_name = ? AND constraint_type = 'PRIMARY KEY' """,
         [database],
     ).fetchall()
-    return {(schema, table): set(columns) for schema, table, columns in rows}
-
-
-def _examples(connection: duckdb.DuckDBPyConnection, table: str, column: str, count: int) -> list[str]:
-    if count == 0:
-        return []
-    quoted = _quoted(column)
-    values = connection.execute(
-        f"""SELECT DISTINCT CAST({quoted} AS VARCHAR) FROM (SELECT {quoted} FROM {table} LIMIT {SAMPLE_ROWS})
-            WHERE {quoted} IS NOT NULL LIMIT {count}"""
-    ).fetchall()
-    return [value[:SAMPLE_TEXT_LENGTH] for (value,) in values]
-
-
-def _sql_name(database: str, schema: str, table: str) -> str:
-    parts = (schema, table) if database == FILES_DATABASE else (database, schema, table)
-    return '.'.join(_quoted(part) for part in parts)
+    return {(schema, table): list(columns) for schema, table, columns in rows}
 
 
 def _quoted(identifier: str) -> str:
