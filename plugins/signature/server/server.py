@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.12"
-# dependencies = ["mcp==2.2.0"]
+# dependencies = ["mcp==2.2.0", "psycopg[binary]>=3.2"]
 # ///
 """Signature's MCP server, run on the member's machine over stdio. It calls Signature's REST API with the
 member's key, and leaves each answer for the plugin's hook to show the member: the model learns only that it
@@ -15,6 +15,7 @@ from mcp.server.mcpserver import Context, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 
 import answer_handoff
+import catalog_readers
 import signature_api
 
 
@@ -113,6 +114,26 @@ async def add_documents(domain_id: str, files: list[SourceFile], ctx: Context,
                          'and which you inferred. Signature uses it to build and replies.')
 async def describe_dataset(domain_id: str, explanation: str, ctx: Context) -> Built | StillBuilding:
     return await through_signature(lambda signature: built_from(signature, domain_id, explanation, [], ctx))
+
+
+class SourceReported(TypedDict):
+    """What the model learns from report_source: which source, and how many tables, never the structure itself."""
+    source: str
+    tables: int
+
+
+@server.tool(description='Reports the structure (tables, columns, keys; never rows) of one of the user\'s local '
+                         'Postgres databases to a domain. `service` is a connection service name the user defined '
+                         'in their ~/.pg_service.conf; the plugin reads and sends the structure itself, and you '
+                         'never see or write it.')
+async def report_source(domain_id: str, service: str) -> SourceReported:
+    try:
+        structure = await catalog_readers.read_structure('postgresql', service)
+    except catalog_readers.SourceNotUsable as unusable:
+        raise ToolError(str(unusable)) from unusable
+    await through_signature(lambda signature: signature_api.report_source(
+        signature, domain_id, service, structure.database))
+    return SourceReported(source=service, tables=structure.tables)
 
 
 @server.tool(description='Lists the questions Signature has asked about the domain and not yet had answered.')

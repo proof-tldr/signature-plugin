@@ -21,3 +21,19 @@ Signature) and keeps it in your system keychain.
 
 Requires [uv](https://docs.astral.sh/uv/), which fetches Python and the server's dependencies on
 first run.
+
+## Reporting a local database
+
+`report_source` sends Signature a Postgres database's structure (tables, columns, keys; never rows). The plugin
+reads it itself and sends it directly; your Claude only picks which source by service name and sees a table
+count. Define the service in `~/.pg_service.conf` (or the file named by `PGSERVICEFILE`):
+
+```ini
+[shop]
+host=db.internal
+dbname=shop
+user=reader
+```
+
+and put its password in `~/.pgpass` (`db.internal:5432:shop:reader:<password>`, mode 0600), as libpq normally reads
+it. Then ask Claude to report the `shop` source. No credential is ever a tool argument or output.
