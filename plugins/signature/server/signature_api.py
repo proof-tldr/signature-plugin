@@ -1,20 +1,18 @@
-"""Signature's hosted MCP endpoint as this machine reaches it, with the member's API key: the workspace's
-domains, and a question asked and followed to its outcome."""
+"""Signature's REST API as this machine reaches it, with the member's API key: the workspace's domains, and a
+question asked and followed to its outcome."""
 
 import asyncio
-import json
 import os
+import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
 import httpx2
-from mcp.client.session import ClientSession
-from mcp.client.streamable_http import streamable_http_client
-from mcp.shared.exceptions import MCPError
 
 KEY_REJECTED = 'Signature did not accept your API key. Run /plugin configure signature@signature to enter a new one.'
 POLL_SECONDS = 1.0
 WAIT_SECONDS = 570.0
+REQUEST_TIMEOUT_SECONDS = 30.0
 
 
 class SignatureRefused(Exception):
@@ -49,63 +47,79 @@ class StillWorking:
 type Outcome = Answered | Failed | StillWorking
 
 
-async def in_session[T](work: Callable[[ClientSession], Awaitable[T]]) -> T:
-    """The work's result in one session with Signature. Failures are raised once the session has closed, so they
-    are not wrapped in the connection's task group; the SDK reports a refused key only as a failed request, so the
-    responses' statuses tell it apart."""
-    statuses: list[int] = []
+type Signature = httpx2.AsyncClient
 
-    async def remember(response: httpx2.Response) -> None:
-        statuses.append(response.status_code)
 
-    headers = {'authorization': f'Bearer {os.environ["SIGNATURE_API_KEY"]}'}
+async def in_session[T](work: Callable[[Signature], Awaitable[T]]) -> T:
+    """The work's result, done with one connection to Signature that presents the member's key."""
+    async with httpx2.AsyncClient(base_url=os.environ['SIGNATURE_API_URL'],
+                                  headers={'authorization': f'Bearer {os.environ["SIGNATURE_API_KEY"]}'},
+                                  timeout=REQUEST_TIMEOUT_SECONDS) as signature:
+        return await work(signature)
+
+
+async def body_of(signature: Signature, method: str, path: str, *, params: dict | None = None,
+                  json: dict | None = None) -> dict:
+    """The body of a request Signature accepted; a refusal raised with the reason Signature gave."""
     try:
-        async with httpx2.AsyncClient(headers=headers, event_hooks={'response': [remember]}) as http, \
-                streamable_http_client(os.environ['SIGNATURE_MCP_URL'], http_client=http) as (read, write), \
-                ClientSession(read, write) as session:
-            await session.initialize()
-            try:
-                return await work(session)
-            except SignatureRefused as refused:
-                refusal = refused
-    except (httpx2.HTTPError, MCPError, ExceptionGroup) as failure:
-        if {401, 403} & set(statuses):
-            raise SignatureRefused(KEY_REJECTED) from failure
+        response = await signature.request(method, path, params=params, json=json)
+    except httpx2.HTTPError as failure:
         raise SignatureUnreachable() from failure
-    raise refusal
+    if response.status_code in (401, 403) and not is_problem(response):
+        raise SignatureRefused(KEY_REJECTED)
+    if response.status_code >= 500 or not response.is_error:
+        if response.is_error:
+            raise SignatureUnreachable()
+        return response.json()
+    try:
+        problem = response.json() if is_problem(response) else {}
+    except ValueError:  # a malformed problem body still refuses, with the status's own words
+        problem = {}
+    raise SignatureRefused(problem.get('detail') or problem.get('title') or response.reason_phrase)
 
 
-async def call(session: ClientSession, tool: str, arguments: dict[str, str]) -> dict:
-    result = await session.call_tool(tool, arguments)
-    text = next((part.text for part in result.content if part.type == 'text'), '')
-    if result.is_error:
-        raise SignatureRefused(text)
-    return json.loads(text)
+def is_problem(response: httpx2.Response) -> bool:
+    """Whether Signature itself refused: the gateway's refusals carry no problem details."""
+    return response.headers.get('content-type', '').startswith('application/problem+json')
 
 
-async def list_domains(session: ClientSession) -> dict:
-    return await call(session, 'list_domains', {})
+async def list_domains(signature: Signature) -> dict:
+    return await body_of(signature, 'GET', '/domains')
 
 
-async def describe_domain(session: ClientSession, domain_id: str) -> dict:
-    return await call(session, 'describe_domain', {'domainId': domain_id})
+async def describe_domain(signature: Signature, domain_id: str) -> dict:
+    return await body_of(signature, 'GET', f'/domains/{domain_id}/model/snapshot')
 
 
-async def ask(session: ClientSession, domain_id: str, question: str, thread_id: str | None) -> Asked:
-    arguments = {'domainId': domain_id, 'question': question} | ({'threadId': thread_id} if thread_id else {})
-    accepted = await call(session, 'ask_question', arguments)
-    return Asked(accepted['threadId'], accepted['turnId'])
+async def ask(signature: Signature, domain_id: str, question: str, thread_id: str | None) -> Asked:
+    thread_id = thread_id or str(uuid.uuid4())
+    accepted = await body_of(signature, 'POST', f'/domains/{domain_id}/conversation/questions',
+                             json={'idempotencyKey': str(uuid.uuid4()), 'text': question, 'threadId': thread_id})
+    return Asked(thread_id, accepted['turn']['id'])
 
 
-async def outcome(session: ClientSession, domain_id: str, asked: Asked) -> Outcome:
+async def answer_text(signature: Signature, domain_id: str, thread_id: str, message_id: str) -> str:
+    """The answer's text, found in its thread's transcript, newest page first."""
+    params: dict[str, str | int] = {'limit': 100}
+    while True:
+        page = await body_of(signature, 'GET', f'/domains/{domain_id}/conversation/threads/{thread_id}/messages',
+                             params=params)
+        answer = next((message for message in page['messages'] if message['id'] == message_id), None)
+        if answer:
+            return answer['text']
+        if not page['previousCursor']:
+            raise SignatureRefused('Signature answered, but its answer could not be found. Ask again.')
+        params = {'limit': 100, 'cursor': page['previousCursor']}
+
+
+async def outcome(signature: Signature, domain_id: str, asked: Asked) -> Outcome:
     """The question's outcome, waited for while it is pending, up to WAIT_SECONDS."""
-    arguments = {'domainId': domain_id, 'threadId': asked.thread_id, 'turnId': asked.turn_id}
     loop = asyncio.get_running_loop()
     deadline = loop.time() + WAIT_SECONDS
     while loop.time() < deadline:
-        turn = await call(session, 'get_answer', arguments)
+        turn = await body_of(signature, 'GET', f'/domains/{domain_id}/conversation/turns/{asked.turn_id}')
         if turn['state'] == 'answered':
-            return Answered(turn['answer'])
+            return Answered(await answer_text(signature, domain_id, asked.thread_id, turn['assistantMessageId']))
         if turn['state'] == 'failed':
             return Failed()
         await asyncio.sleep(POLL_SECONDS)

@@ -2,8 +2,8 @@
 # requires-python = ">=3.12"
 # dependencies = ["mcp==2.2.0"]
 # ///
-"""Signature's MCP server, run on the member's machine over stdio. It reaches Signature's hosted MCP endpoint with
-the member's key, and leaves each answer for the plugin's hook to show the member: the model learns only that it
+"""Signature's MCP server, run on the member's machine over stdio. It calls Signature's REST API with the
+member's key, and leaves each answer for the plugin's hook to show the member: the model learns only that it
 was shown."""
 
 import json
@@ -11,7 +11,6 @@ import logging
 from collections.abc import Awaitable, Callable
 from typing import TypedDict
 
-from mcp.client.session import ClientSession
 from mcp.server.mcpserver import Context, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 
@@ -37,16 +36,16 @@ async def list_domains() -> str:
 
 @server.tool(description='Returns a domain’s whole model: its scalars, entities, fields, functions and axioms.')
 async def describe_domain(domain_id: str) -> str:
-    return json.dumps(await through_signature(lambda session: signature_api.describe_domain(session, domain_id)))
+    return json.dumps(await through_signature(lambda signature: signature_api.describe_domain(signature, domain_id)))
 
 
 @server.tool(description='Asks a question about a published domain’s data and shows the answer to the user. '
                          'Pass a thread_id from an earlier ask_question to ask a follow-up in the same thread.')
 async def ask_question(domain_id: str, question: str, ctx: Context, thread_id: str | None = None) -> AskedResult:
-    async def asked_and_ended(session: ClientSession) -> tuple[signature_api.Asked, signature_api.Outcome]:
-        asked = await signature_api.ask(session, domain_id, question, thread_id)
+    async def asked_and_ended(signature: signature_api.Signature) -> tuple[signature_api.Asked, signature_api.Outcome]:
+        asked = await signature_api.ask(signature, domain_id, question, thread_id)
         await ctx.report_progress(0, message='Signature is answering…')
-        return asked, await signature_api.outcome(session, domain_id, asked)
+        return asked, await signature_api.outcome(signature, domain_id, asked)
 
     asked, ended = await through_signature(asked_and_ended)
     shown, told = shown_and_told(ended)
@@ -69,8 +68,8 @@ def shown_and_told(ended: signature_api.Outcome) -> tuple[str, str]:
                     'Signature did not answer in time, and the user was told.')
 
 
-async def through_signature[T](work: Callable[[ClientSession], Awaitable[T]]) -> T:
-    """The work done in a session with Signature, its failures told to the model as tool errors."""
+async def through_signature[T](work: Callable[[signature_api.Signature], Awaitable[T]]) -> T:
+    """The work done with Signature's API, its failures told to the model as tool errors."""
     try:
         return await signature_api.in_session(work)
     except signature_api.SignatureRefused as refused:
