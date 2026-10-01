@@ -16,7 +16,6 @@ from mcp.server.mcpserver.exceptions import ToolError
 
 import answer_handoff
 import catalog_readers
-import local_sources
 import signature_api
 
 
@@ -124,16 +123,17 @@ class SourceReported(TypedDict):
 
 
 @server.tool(description='Reports the structure (tables, columns, keys; never rows) of one of the user\'s local '
-                         'databases to a domain. `source_name` is a name the user declared in their sources file; '
-                         'the plugin reads and sends the structure itself, and you never see or write it.')
-async def report_source(domain_id: str, source_name: str) -> SourceReported:
+                         'Postgres databases to a domain. `service` is a connection service name the user defined '
+                         'in their ~/.pg_service.conf; the plugin reads and sends the structure itself, and you '
+                         'never see or write it.')
+async def report_source(domain_id: str, service: str) -> SourceReported:
     try:
-        structure = await catalog_readers.read_structure(local_sources.local_source(source_name))
-    except local_sources.SourceNotUsable as unusable:
+        structure = await catalog_readers.read_structure('postgresql', service)
+    except catalog_readers.SourceNotUsable as unusable:
         raise ToolError(str(unusable)) from unusable
     await through_signature(lambda signature: signature_api.report_source(
-        signature, domain_id, source_name, structure.database))
-    return SourceReported(source=source_name, tables=structure.tables)
+        signature, domain_id, service, structure.database))
+    return SourceReported(source=service, tables=structure.tables)
 
 
 @server.tool(description='Lists the questions Signature has asked about the domain and not yet had answered.')

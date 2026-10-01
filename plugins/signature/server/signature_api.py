@@ -213,12 +213,13 @@ async def published_at(signature: Signature, domain_id: str) -> str | None:
         return None
 
 
-def source_id_of(name: str) -> str:
+def source_id_of(domain_id: str, service: str) -> str:
     """The id Signature knows a local source by, the same on every report so a re-report replaces the last."""
-    return str(uuid.uuid5(uuid.NAMESPACE_URL, f'signature-plugin:source:{name}'))
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f'signature-plugin:source:{domain_id}:{service}'))
 
 
-async def report_source(signature: Signature, domain_id: str, name: str, database: dict) -> dict:
-    """A source's structure, read on the member's machine, replacing what Signature held for that name."""
-    return await body_of(signature, 'PUT', f'/domains/{domain_id}/model/sources/{source_id_of(name)}/catalog',
-                         json={'name': name, 'database': database})
+async def report_source(signature: Signature, domain_id: str, service: str, database: dict) -> dict:
+    """A source's structure, read on the member's machine, replacing what Signature held for that service."""
+    source_id = source_id_of(domain_id, service)
+    return await body_of(signature, 'PUT', f'/domains/{domain_id}/model/sources/{source_id}/catalog',
+                         json={'name': service, 'database': database})

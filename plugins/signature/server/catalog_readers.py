@@ -1,14 +1,15 @@
-"""Reads a local database's structure with the member's own connection. Each adapter is a row of ADAPTERS: how
+"""Reads a local database's structure through a libpq connection service the member defined (~/.pg_service.conf,
+passwords from ~/.pgpass), so no credential passes through the plugin's own code. Each adapter is a row of ADAPTERS: how
 to read its catalog, and how to shape what was read. Only the catalog is queried, never a table's rows."""
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
 import psycopg
+from psycopg.conninfo import make_conninfo
 from psycopg.rows import dict_row
 
 from catalog_report import PostgresqlCatalogRows, postgresql_database, table_count
-from local_sources import LocalSource, SourceNotUsable
 
 USER_RELATIONS = '''
     relation.relkind IN ('r', 'p', 'v')
@@ -49,9 +50,9 @@ async def fetch_all(connection: psycopg.AsyncConnection, query: str) -> list[dic
     return await (await connection.execute(query)).fetchall()
 
 
-async def read_postgresql(connection_string: str) -> dict:
+async def read_postgresql(service: str) -> dict:
     """The `database` of a reported source, from a read-only look at Postgres's catalog."""
-    async with await psycopg.AsyncConnection.connect(connection_string, row_factory=dict_row) as connection:
+    async with await psycopg.AsyncConnection.connect(make_conninfo(service=service), row_factory=dict_row) as connection:
         await connection.set_read_only(True)
         relations = await fetch_all(connection, RELATIONS)
         columns = await fetch_all(connection, COLUMNS)
@@ -76,15 +77,18 @@ class ReadStructure:
     tables: int
 
 
-async def read_structure(source: LocalSource) -> ReadStructure:
-    """The structure of a local source, read with its own connection; a source that cannot be read is refused."""
-    adapter = ADAPTERS.get(source.adapter)
+class SourceNotUsable(Exception):
+    """A local source that cannot be reported, with a reason that names no secret."""
+
+
+async def read_structure(adapter_name: str, service: str) -> ReadStructure:
+    """The structure of the database a connection service points at; one that cannot be read is refused."""
+    adapter = ADAPTERS.get(adapter_name)
     if adapter is None:
-        raise SourceNotUsable(f'Source {source.name} uses the adapter "{source.adapter}", which the plugin cannot '
-                              f'read. It reads: {", ".join(ADAPTERS)}.')
+        raise SourceNotUsable(f'The plugin cannot read {adapter_name} databases. It reads: {", ".join(ADAPTERS)}.')
     try:
-        database = await adapter.read(source.connection_string)
+        database = await adapter.read(service)
     except adapter.failures as failure:
-        raise SourceNotUsable(f'Could not read the structure of {source.name}: {type(failure).__name__}. '
-                              'Check its connection string.') from failure
+        raise SourceNotUsable(f'Could not read the structure of service {service}: {type(failure).__name__}. '
+                              'Check it is in ~/.pg_service.conf and its password in ~/.pgpass.') from failure
     return ReadStructure(database, table_count(database))

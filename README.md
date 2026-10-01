@@ -24,12 +24,16 @@ first run.
 
 ## Reporting a local database
 
-`report_source` sends Signature a database's structure (tables, columns, keys; never rows). The plugin reads it
-itself and sends it directly; your Claude only picks which source by name and sees a table count. Declare sources
-in `~/.config/signature/sources.json` (or the file named by `SIGNATURE_SOURCES_FILE`):
+`report_source` sends Signature a Postgres database's structure (tables, columns, keys; never rows). The plugin
+reads it itself and sends it directly; your Claude only picks which source by service name and sees a table
+count. Define the service in `~/.pg_service.conf` (or the file named by `PGSERVICEFILE`):
 
-```json
-{"sources": {"shop": {"adapter": "postgresql", "connection_env": "SHOP_DATABASE_URL"}}}
+```ini
+[shop]
+host=db.internal
+dbname=shop
+user=reader
 ```
 
-The connection string lives in that environment variable where Claude Code runs, never in the file or in a tool call.
+and put its password in `~/.pgpass` (`db.internal:5432:shop:reader:<password>`, mode 0600), as libpq normally reads
+it. Then ask Claude to report the `shop` source. No credential is ever a tool argument or output.
