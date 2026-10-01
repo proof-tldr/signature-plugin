@@ -3,6 +3,7 @@
 import io
 import json
 import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -13,7 +14,7 @@ from mcp import Client
 from mcp.client.session import ClientRequestContext
 from mcp_types import ElicitRequestParams, ElicitRequestURLParams, ElicitResult
 
-from signature_plugin import show_answer
+from signature_plugin import handoff, show_answer
 from signature_plugin.fake_backend import FakeSignature
 from signature_plugin.server import server
 
@@ -106,8 +107,7 @@ async def test_setup_from_files_and_documents_to_published_answers(
     show_answer.main()
     message = json.loads(shown.getvalue())['systemMessage']
     assert 'total amount per order status' in message
-    assert 'paid     │ 1700' in message
-    assert 'refunded │ 500' in message
+    assert re.search(r'paid +│ 1700', message) and re.search(r'refunded +│ 500', message)
 
 
 async def test_a_change_asked_for_in_review_is_built(
@@ -274,3 +274,27 @@ async def test_a_domain_that_cannot_get_ready_for_questions_is_said_to_be_publis
         reviewed = await called_through_page(client, 'review', opened_pages, {'decision': 'publish'})
     assert reviewed['state'] == 'published'
     assert 'could not get ready' in reviewed['note'] and 'stayed invalid' in reviewed['note']
+
+
+async def test_an_answer_is_shown_under_the_column_names_signature_gives(
+    plugin_environment: FakeSignature, opened_pages: list[str], data_files: Path
+) -> None:
+    async with Client(server, raise_exceptions=True) as client:
+        await called(client, 'add_data_files', {'paths': [str(data_files)]})
+        await called(client, 'build', {'note': 'Amounts are cents.'})
+        await called_through_page(client, 'review', opened_pages, {'decision': 'publish'})
+        await called(client, 'ask_question', {'question': 'What did each status bring in?'})
+    shown = handoff.take('What did each status bring in?') or ''
+    assert 'order status' in shown and 'amount brought in' in shown
+
+
+async def test_a_question_signature_cannot_prove_an_answer_to_is_told_with_why_and_nothing_runs(
+    plugin_environment: FakeSignature, opened_pages: list[str], data_files: Path
+) -> None:
+    async with Client(server, raise_exceptions=True) as client:
+        await called(client, 'add_data_files', {'paths': [str(data_files)]})
+        await called(client, 'build', {'note': 'Amounts are cents.'})
+        await called_through_page(client, 'review', opened_pages, {'decision': 'publish'})
+        asked = await called(client, 'ask_question', {'question': 'Which customers are loyal?'})
+    assert asked['state'] == 'unproven'
+    assert 'refuted' in (handoff.take('Which customers are loyal?') or '')

@@ -85,7 +85,12 @@ def fake_signature() -> Generator[tuple[FakeSignature, str]]:
     """The stand-in Signature, running on a free port; it and its address."""
     signature = FakeSignature(
         canned_queries={
-            'What did each status bring in?': {'reading': 'total amount per order status', 'sql': ORDERS_SQL}
+            'What did each status bring in?': {
+                'reading': 'total amount per order status',
+                'sql': ORDERS_SQL,
+                'columns': ['order status', 'amount brought in'],
+            },
+            'Which customers are loyal?': {'state': 'failed', 'reason': 'the checker refuted the program'},
         }
     )
     port = _free_port()

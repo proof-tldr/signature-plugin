@@ -9,13 +9,16 @@ SHOWN_ROWS = 50
 CELL_WIDTH = 40
 
 
-def answer_text(reading: str | None, result: Result) -> str:
+def answer_text(reading: str | None, names: list[str], result: Result) -> str:
+    """The answer as the customer sees it: how Signature read the question, then the rows under the names
+    Signature gave the columns, or the query's own names where it gave none."""
     lines = [f'Signature read your question as: {reading}', ''] if reading else []
+    headers = names if len(names) == len(result.columns) else result.columns
     if not result.rows:
         return '\n'.join([*lines, 'No rows match.'])
     shown = result.rows[:SHOWN_ROWS]
-    cells = [result.columns, *[[_cell(value) for value in row] for row in shown]]
-    widths = [max(len(row[i]) for row in cells) for i in range(len(result.columns))]
+    cells = [headers, *[[_cell(value) for value in row] for row in shown]]
+    widths = [max(len(row[i]) for row in cells) for i in range(len(headers))]
     table = [' │ '.join(cell.ljust(width) for cell, width in zip(row, widths, strict=True)) for row in cells]
     table.insert(1, '─┼─'.join('─' * width for width in widths))
     lines.extend(table)

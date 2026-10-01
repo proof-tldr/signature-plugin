@@ -86,6 +86,7 @@ class QueryPlan:
     reading: str | None
     sql: str | None
     reason: str | None
+    columns: list[str]  # the names Signature gives the result's columns, in order; empty when it names none
 
 
 class Signature:
@@ -215,6 +216,7 @@ class Signature:
             reading=found.get('reading'),
             sql=found.get('sql'),
             reason=found.get('reason'),
+            columns=found.get('columns', []),
         )
 
 

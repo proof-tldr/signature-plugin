@@ -101,7 +101,7 @@ class Reviewed(TypedDict):
 
 
 class Asked(TypedDict):
-    state: Literal['shown', 'unanswerable', 'stale']
+    state: Literal['shown', 'unanswerable', 'unproven', 'stale']
     note: str
 
 
@@ -396,7 +396,7 @@ async def ask_question(question: str, ctx: Context[PluginState], follow_up: bool
             case 'planned' if plan.sql:
                 await ctx.report_progress(0, message='Running it on your data…')
                 result = await anyio.to_thread.run_sync(local.run, session.sources.all(), plan.sql)
-                handoff.leave(question, presentation.answer_text(plan.reading, result))
+                handoff.leave(question, presentation.answer_text(plan.reading, plan.columns, result))
                 return Asked(state='shown', note='The answer was shown to the customer. You cannot see it.')
             case 'unanswerable':
                 handoff.leave(question, f"Signature can't answer this from your domain: {plan.reason}")
@@ -412,6 +412,13 @@ async def ask_question(question: str, ctx: Context[PluginState], follow_up: bool
                     state='stale',
                     note="The customer's tables or columns changed after publishing. Call build, then review so "
                     'they can publish again, then ask again.',
+                )
+            case 'failed':
+                handoff.leave(question, f'Signature could not prove a query that answers this: {plan.reason}')
+                return Asked(
+                    state='unproven',
+                    note='Signature could not prove an answer, so nothing was run, and the customer was told why. '
+                    'Offer to ask it more simply, one part at a time.',
                 )
             case _:
                 raise ToolError('Signature could not work out a query for this question.')

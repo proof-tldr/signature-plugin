@@ -44,7 +44,7 @@ class FakeSignature:
     questions: dict[str, dict[str, Any]] = field(default_factory=dict[str, dict[str, Any]])
     queries: dict[str, dict[str, Any]] = field(default_factory=dict[str, dict[str, Any]])
     asked_about_documents: bool = False
-    canned_queries: dict[str, dict[str, str]] = field(default_factory=dict[str, dict[str, str]])
+    canned_queries: dict[str, dict[str, Any]] = field(default_factory=dict[str, dict[str, Any]])
     builds: set[asyncio.Task[None]] = field(default_factory=set[asyncio.Task[None]])
 
     def app(self) -> Starlette:
@@ -196,10 +196,11 @@ class FakeSignature:
         query_id = str(uuid.uuid4())
         canned = self.canned_queries.get(body['question'])
         first_table = next((self.sql_name(table) for table in self.tables()), None)
+        plan: dict[str, Any]
         if self.published_fingerprint and body.get('fingerprint') != self.published_fingerprint:
             plan = {'state': 'stale', 'reason': 'the sources changed shape after publishing'}
         elif canned:
-            plan = {'state': 'planned', 'reading': canned['reading'], 'sql': canned['sql']}
+            plan = {'state': 'planned', 'columns': []} | canned
         elif first_table:
             plan = {
                 'state': 'planned',
@@ -248,5 +249,5 @@ def main() -> None:
     parser.add_argument('--port', type=int, default=8790)
     arguments = parser.parse_args()
     canned_path = os.environ.get('SIGNATURE_FAKE_QUERIES')
-    canned: dict[str, dict[str, str]] = json.loads(Path(canned_path).read_text(encoding='utf-8')) if canned_path else {}
+    canned: dict[str, dict[str, Any]] = json.loads(Path(canned_path).read_text(encoding='utf-8')) if canned_path else {}
     uvicorn.run(FakeSignature(canned_queries=canned).app(), host='127.0.0.1', port=arguments.port)
