@@ -72,6 +72,12 @@ def test_a_select_runs(sources: list[FileSource]) -> None:
     assert result.rows == [('Acme', 1500), ('Globex', 700)]
 
 
+def test_each_row_of_a_file_has_its_own_rowid(sources: list[FileSource]) -> None:
+    """Signature keys a file's rows by their rowid, as a file has no key."""
+    result = local_data.run(sources, 'SELECT count(DISTINCT rowid), count(*) FROM memory.files.orders')
+    assert result.rows == [(3, 3)]
+
+
 @pytest.mark.parametrize(
     ('sql', 'reason'),
     [

@@ -1,10 +1,11 @@
-"""The customer's sources opened together in one embedded DuckDB, on this machine: files as views, databases
+"""The customer's sources opened together in one embedded DuckDB, on this machine: files loaded as tables, databases
 attached read-only. It reports their structure and runs Signature's queries, locked so that a query can read
 only those sources and change nothing.
 
-Every table is named `"catalog"."schema"."name"`: a file is the view `"memory"."files"."<source>"` in DuckDB's own
-in-memory catalog, and a database's tables are `"<source>"."<schema>"."<table>"`. Signature is told the whole
-DuckDB as one catalog, and its SQL names tables that way."""
+Every table is named `"catalog"."schema"."name"`: a file is the table `"memory"."files"."<source>"` in DuckDB's own
+in-memory catalog, loaded rather than viewed so that each row has a `rowid` identifying it, as a file has no key;
+a database's tables are `"<source>"."<schema>"."<table>"`. Signature is told the whole DuckDB as one catalog, and
+its SQL names tables that way."""
 
 import hashlib
 import json
@@ -18,7 +19,7 @@ import duckdb
 
 from signature_plugin.sources import DatabaseSource, FileFormat, FileSource, Source, SourceRefused, password_of
 
-# Files are views in this schema of DuckDB's own in-memory database; each database source is attached beside it.
+# Files are tables in this schema of DuckDB's own in-memory database; each database source is attached beside it.
 FILES_DATABASE = 'memory'
 FILES_SCHEMA = 'files'
 SYSTEM_SCHEMAS = {'information_schema', 'pg_catalog', 'mysql', 'performance_schema', 'sys'}
@@ -150,8 +151,8 @@ def _attach(connection: duckdb.DuckDBPyConnection, source: Source) -> None:
                 reader, extension = FILE_READERS[source.format]
                 if extension:
                     connection.execute(f'INSTALL {extension}; LOAD {extension}')
-                view = f'{FILES_SCHEMA}.{_quoted(source.name)}'
-                connection.execute(f'CREATE VIEW {view} AS SELECT * FROM {reader}({_literal(source.path)})')
+                table = f'{FILES_SCHEMA}.{_quoted(source.name)}'
+                connection.execute(f'CREATE TABLE {table} AS SELECT * FROM {reader}({_literal(source.path)})')
             case DatabaseSource():
                 connection.execute(f'INSTALL {source.engine}; LOAD {source.engine}')
                 secret = _quoted(f'{source.name}_login')
