@@ -142,6 +142,17 @@ async def list_clarifications(domain_id: str) -> str:
         lambda signature: signature_api.clarifying_questions(signature, domain_id)))
 
 
+@server.tool(description='Answers one open question Signature asked about the domain, by its id from '
+                         'list_clarifications, with the answer the user gave or you know to be true. '
+                         'Signature takes the answer, continues building and replies.')
+async def answer_clarification(domain_id: str, question_id: str, answer: str, ctx: Context) -> Built | StillBuilding:
+    async def built(signature: signature_api.Signature) -> Built | StillBuilding:
+        turn_id = await signature_api.answer_clarification(signature, domain_id, question_id, answer)
+        return await followed(signature, domain_id, turn_id, ctx)
+
+    return await through_signature(built)
+
+
 @server.tool(description='Returns where a domain stands: its name, when it was last published (null if never), '
                          'and the questions Signature still has about it.')
 async def get_domain_status(domain_id: str) -> DomainStatus:
@@ -156,8 +167,14 @@ async def get_domain_status(domain_id: str) -> DomainStatus:
 
 async def built_from(signature: signature_api.Signature, domain_id: str, text: str | None,
                      sources: list[signature_api.StagedSource], ctx: Context) -> Built | StillBuilding:
-    """One build turn sent and followed to its end, with the questions it leaves open."""
+    """One build turn sent and followed to its end."""
     turn_id = await signature_api.build(signature, domain_id, text, sources)
+    return await followed(signature, domain_id, turn_id, ctx)
+
+
+async def followed(signature: signature_api.Signature, domain_id: str, turn_id: str,
+                   ctx: Context) -> Built | StillBuilding:
+    """A build turn followed to its end, with the questions it leaves open."""
     await ctx.report_progress(0, message='Signature is building…')
     match await signature_api.outcome(signature, domain_id, turn_id):
         case signature_api.Answered(reply):
