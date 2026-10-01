@@ -200,7 +200,7 @@ class FakeSignature:
         if self.published_fingerprint and body.get('fingerprint') != self.published_fingerprint:
             plan = {'state': 'stale', 'reason': 'the sources changed shape after publishing'}
         elif canned:
-            plan = {'state': 'planned', 'columns': []} | canned
+            plan = {'state': 'planned', 'columns': list[str]()} | canned
         elif first_table:
             plan = {
                 'state': 'planned',
