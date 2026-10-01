@@ -201,6 +201,14 @@ async def clarifying_questions(signature: Signature, domain_id: str) -> list[dic
     return (await body_of(signature, 'GET', f'/domains/{domain_id}/conversation/clarifying-questions'))['questions']
 
 
+async def answer_clarification(signature: Signature, domain_id: str, question_id: str, answer: str) -> str:
+    """One open question answered; the id of the turn Signature builds from it."""
+    accepted = await body_of(signature, 'POST',
+                             f'/domains/{domain_id}/conversation/clarifying-questions/{question_id}/answer',
+                             json={'answer': answer})
+    return accepted['turn']['id']
+
+
 async def domain(signature: Signature, domain_id: str) -> dict:
     return await body_of(signature, 'GET', f'/domains/{domain_id}')
 
