@@ -57,7 +57,7 @@ class FakeSignature:
                 Route(
                     f'{domain}/conversation/clarifying-questions/{{question_id}}/answer', self.answer, methods=['POST']
                 ),
-                Route(f'{domain}/review', self.review),
+                Route(f'{domain}/model/snapshot', self.model_snapshot),
                 Route(f'{domain}/publish', self.publish, methods=['POST']),
                 Route(f'{domain}/queries', self.plan_query, methods=['POST']),
                 Route(f'{domain}/queries/{{query_id}}', self.get_query),
@@ -122,18 +122,43 @@ class FakeSignature:
         answer = (await request.json())['answer']
         return JSONResponse({'turn': self._turn(f'Noted: {answer}')}, status_code=202)
 
-    async def review(self, _request: Request) -> Response:
+    async def model_snapshot(self, _request: Request) -> Response:
+        """A model with one entity per reported table and one field per column, mapped from that table."""
+        entities: list[dict[str, Any]] = []
+        fields: list[dict[str, Any]] = []
+        tables: list[dict[str, Any]] = []
+        mappings: list[dict[str, Any]] = []
+        for source, catalog in self.catalogs.items():
+            for table in catalog['tables']:
+                entity_id, table_id = str(uuid.uuid4()), str(uuid.uuid4())
+                entities.append(
+                    {
+                        'id': entity_id,
+                        'name': table['name'].title(),
+                        'invariants': [],
+                        'doc': f'Read from {source} (stand-in backend).',
+                    }
+                )
+                fields += [
+                    {
+                        'id': str(uuid.uuid4()),
+                        'entityId': entity_id,
+                        'name': column['name'],
+                        'type': {'kind': 'named', 'name': column['type'].lower()},
+                    }
+                    for column in table['columns']
+                ]
+                tables.append({'id': table_id, 'sourceId': source, 'relation': table['sqlName']})
+                mappings.append({'id': str(uuid.uuid4()), 'entityId': entity_id, 'databaseEntityId': table_id})
         return JSONResponse(
             {
-                'summary': f'{self.domain_name} draws on {len(self.catalogs)} source(s) and '
-                f'{len(self.documents)} document(s). (This review comes from the stand-in backend.)',
-                'sections': [
-                    {
-                        'title': name,
-                        'points': [f'{table["name"]}: {len(table["columns"])} columns' for table in catalog['tables']],
-                    }
-                    for name, catalog in self.catalogs.items()
-                ],
+                'entities': entities,
+                'fields': fields,
+                'functions': [],
+                'axioms': [],
+                'sources': [{'id': name} for name in self.catalogs],
+                'databaseEntities': tables,
+                'mappings': mappings,
             }
         )
 

@@ -24,6 +24,7 @@ from signature_plugin.backend import (
 )
 from signature_plugin.local_data import QueryRefused
 from signature_plugin.pages import Page, Pages, Refusal
+from signature_plugin.review import review_of
 from signature_plugin.settings import NotConfigured, from_environment
 from signature_plugin.sources import DatabaseSource, FileSource, Source, SourceRefused, Sources
 
@@ -272,7 +273,7 @@ async def review(ctx: Context[PluginState]) -> Reviewed | Waiting:
 
         async def review_page(pages: Pages) -> Page[ReviewDecision]:
             domain = await signature.domain()
-            context = {'domain_name': domain.name, 'review': await signature.review()}
+            context = {'domain_name': domain.name, 'review': review_of(await signature.model_snapshot())}
             return await pages.show('review.html', context, _review_decision)
 
         decision = await _decision_on_page(ctx, 'review', review_page, 'Waiting for the customer to review…')

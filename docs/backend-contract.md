@@ -21,7 +21,7 @@ id it chose: it reads the one domain the key opens from `GET /domains`.
 | `GET /domains/{id}/conversation/clarifying-questions` → `{questions: [{id, question, suggestedAnswers}]}` | exists |
 | `POST /domains/{id}/conversation/clarifying-questions/{questionId}/answer` `{answer}` → `{turn: {id}}` | exists |
 | `POST /domains/{id}/publish` | exists; a domain key may call it (checked 2026-10-01) |
-| `GET /domains/{id}/review` | **new** |
+| `GET /domains/{id}/model/snapshot` → the whole model, rendered as the review page | exists |
 | `POST /domains/{id}/queries`, `GET /domains/{id}/queries/{queryId}` | **new** |
 
 ## Documents
@@ -56,11 +56,6 @@ with `database: {adapter: "duckdb", catalog}`:
 - `primaryKey` is known for PostgreSQL tables and is false elsewhere. Foreign keys are not reported yet.
 - `examples` holds up to five distinct values per column, from the first 1,000 rows, each at most 80
   characters. They let Signature see codes and formats. Whole rows never leave the machine.
-
-## Review (new)
-
-`GET /domains/{id}/review` → `{summary, sections: [{title, points: [string]}]}`: the domain in plain English,
-for the customer to read before publishing. The plugin renders it as given.
 
 ## Queries (new)
 

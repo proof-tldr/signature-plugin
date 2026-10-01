@@ -45,7 +45,7 @@ In `plugins/signature/server/src/signature_plugin/`:
 | `backend.py` | Signature's REST API, bound to the key's one domain |
 | `sources.py` | Which files and databases the customer added; passwords in the keychain |
 | `local_data.py` | Opens every source in one locked, read-only DuckDB; reports structure; runs Signature's SQL |
-| `pages.py`, `templates/` | The local browser pages for connecting a database and reviewing the domain |
+| `pages.py`, `templates/`, `review.py` | The local browser pages for connecting a database and reviewing the domain, the review drawn from Signature's model snapshot |
 | `handoff.py`, `show_answer.py`, `presentation.py` | Getting an answer to the customer without it reaching Claude |
 | `fake_backend.py` | A stand-in Signature implementing the contract, for development and rehearsal |
 

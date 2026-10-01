@@ -8,6 +8,7 @@
   <p>{{ review.summary }}</p>
   {% for section in review.sections %}
     <h2>{{ section.title }}</h2>
+    {% if section.intro %}<p>{{ section.intro }}</p>{% endif %}
     <ul class="points">{% for point in section.points %}<li>{{ point }}</li>{% endfor %}</ul>
   {% endfor %}
 </div>

@@ -56,18 +56,6 @@ class OpenQuestion:
     suggested_answers: list[str]
 
 
-@dataclass(frozen=True)
-class ReviewSection:
-    title: str
-    points: list[str]
-
-
-@dataclass(frozen=True)
-class Review:
-    summary: str
-    sections: list[ReviewSection]
-
-
 type QueryState = Literal['pending', 'planned', 'unanswerable', 'failed']
 
 
@@ -177,12 +165,9 @@ class Signature:
         )
         return accepted['turn']['id']
 
-    async def review(self) -> Review:
-        found = await _body(self._client, 'GET', f'/domains/{self.domain_id}/review')
-        return Review(
-            summary=found['summary'],
-            sections=[ReviewSection(title=section['title'], points=section['points']) for section in found['sections']],
-        )
+    async def model_snapshot(self) -> dict[str, Any]:
+        """The domain's whole model as Signature holds it: entities, fields, rules and where each comes from."""
+        return await _body(self._client, 'GET', f'/domains/{self.domain_id}/model/snapshot')
 
     async def publish(self) -> None:
         await _body(self._client, 'POST', f'/domains/{self.domain_id}/publish', json={})
