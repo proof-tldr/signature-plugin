@@ -98,20 +98,6 @@ async def ask(signature: Signature, domain_id: str, question: str, thread_id: st
     return Asked(thread_id, accepted['turn']['id'])
 
 
-async def answer_text(signature: Signature, domain_id: str, thread_id: str, message_id: str) -> str:
-    """The answer's text, found in its thread's transcript, newest page first."""
-    params: dict[str, str | int] = {'limit': 100}
-    while True:
-        page = await body_of(signature, 'GET', f'/domains/{domain_id}/conversation/threads/{thread_id}/messages',
-                             params=params)
-        answer = next((message for message in page['messages'] if message['id'] == message_id), None)
-        if answer:
-            return answer['text']
-        if not page['previousCursor']:
-            raise SignatureRefused('Signature answered, but its answer could not be found. Ask again.')
-        params = {'limit': 100, 'cursor': page['previousCursor']}
-
-
 async def outcome(signature: Signature, domain_id: str, asked: Asked) -> Outcome:
     """The question's outcome, waited for while it is pending, up to WAIT_SECONDS."""
     loop = asyncio.get_running_loop()
@@ -119,7 +105,7 @@ async def outcome(signature: Signature, domain_id: str, asked: Asked) -> Outcome
     while loop.time() < deadline:
         turn = await body_of(signature, 'GET', f'/domains/{domain_id}/conversation/turns/{asked.turn_id}')
         if turn['state'] == 'answered':
-            return Answered(await answer_text(signature, domain_id, asked.thread_id, turn['assistantMessageId']))
+            return Answered(turn['reply'])
         if turn['state'] == 'failed':
             return Failed()
         await asyncio.sleep(POLL_SECONDS)
