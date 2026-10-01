@@ -211,3 +211,14 @@ async def published_at(signature: Signature, domain_id: str) -> str | None:
         return (await body_of(signature, 'GET', f'/domains/{domain_id}/publication'))['publishedAt']
     except NotFound:
         return None
+
+
+def source_id_of(name: str) -> str:
+    """The id Signature knows a local source by, the same on every report so a re-report replaces the last."""
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f'signature-plugin:source:{name}'))
+
+
+async def report_source(signature: Signature, domain_id: str, name: str, database: dict) -> dict:
+    """A source's structure, read on the member's machine, replacing what Signature held for that name."""
+    return await body_of(signature, 'PUT', f'/domains/{domain_id}/model/sources/{source_id_of(name)}/catalog',
+                         json={'name': name, 'database': database})
