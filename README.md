@@ -1,39 +1,74 @@
 # Signature for Claude Code
 
-Connects Claude Code to Signature. Answers to your questions print in your terminal and are
-withheld from the model.
+Builds a Signature domain from your data and documents, and answers your questions about it with SQL that
+Signature writes and your own machine runs. Answers print in your terminal; Claude never sees them.
 
 ```sh
 claude plugin marketplace add proof-tldr/signature-plugin
 claude plugin install signature@signature
 ```
 
-Claude Code asks for your API key during install (create one under Settings → API keys in
-Signature) and keeps it in your system keychain.
+Claude Code asks for the API key Signature gave you, which opens one domain, and keeps it in your system
+keychain. Then ask Claude to set up Signature. There is nothing else to install: the plugin fetches what it
+needs on first start.
 
-## What's here
+## What happens
 
-- `plugins/signature/server/server.py` — the Signature MCP server, run on your machine. It reaches
-  Signature with your key and offers `list_domains`, `describe_domain` and `ask_question`.
-- `plugins/signature/server/show_answer.py` — after `ask_question`, shows you the answer the server
-  left for it; the model only learns that it was shown.
-- `plugins/signature/hooks/hooks.json` — runs that hook after every `ask_question`.
+1. Claude asks where your data lives. Files (CSV, TSV, XLSX, Parquet, JSON) are added by path. For a
+   PostgreSQL or MySQL database, a page opens in your browser where you enter the connection yourself; the
+   password goes to your keychain and never to Claude or Signature.
+2. You give Claude your documents, and it hands them to Signature as they are, with the structure of your
+   data and a few example values per column. Your rows stay on your machine.
+3. Signature builds the domain and may ask questions, for example when documents disagree. Claude answers
+   what it can and asks you the rest.
+4. A review page opens in your browser. You publish the domain there, or say what's wrong.
+5. You ask questions. Signature writes the SQL; it runs here, read-only, and the answer is shown to you.
 
-Requires [uv](https://docs.astral.sh/uv/), which fetches Python and the server's dependencies on
-first run.
+See [docs/setup-ux.md](docs/setup-ux.md) for the experience and [docs/vision.md](docs/vision.md) for why.
 
-## Reporting a local database
+## Layout
 
-`report_source` sends Signature a Postgres database's structure (tables, columns, keys; never rows). The plugin
-reads it itself and sends it directly; your Claude only picks which source by service name and sees a table
-count. Define the service in `~/.pg_service.conf` (or the file named by `PGSERVICEFILE`):
+| Path | Holds |
+| --- | --- |
+| `plugins/signature/.mcp.json` | Starts the server through `bin/signature` with your key |
+| `plugins/signature/bin/signature` | The launcher: runs the server on its own pinned Python, fetching `uv` if the machine has none |
+| `plugins/signature/hooks/hooks.json` | Shows each answer to you after `ask_question` |
+| `plugins/signature/skills/setup/SKILL.md` | `/signature:setup`, the setup flow Claude follows |
+| `plugins/signature/server/` | The MCP server, a Python package (below) |
+| `docs/backend-contract.md` | Every Signature API operation the plugin uses, and which are not built yet |
 
-```ini
-[shop]
-host=db.internal
-dbname=shop
-user=reader
+In `plugins/signature/server/src/signature_plugin/`:
+
+| Module | Does |
+| --- | --- |
+| `server.py` | The MCP tools, each one step of the flow |
+| `backend.py` | Signature's REST API, bound to the key's one domain |
+| `sources.py` | Which files and databases the customer added; passwords in the keychain |
+| `local_data.py` | Opens every source in one locked, read-only DuckDB; reports structure; runs Signature's SQL |
+| `pages.py`, `templates/` | The local browser pages for connecting a database and reviewing the domain |
+| `handoff.py`, `show_answer.py`, `presentation.py` | Getting an answer to the customer without it reaching Claude |
+| `fake_backend.py` | A stand-in Signature implementing the contract, for development and rehearsal |
+
+## Development
+
+From `plugins/signature/server`:
+
+```sh
+uv sync
+uv run pytest                    # the suite; database tests need SIGNATURE_TEST_POSTGRES / SIGNATURE_TEST_MYSQL
+uv run ruff check . && uv run ruff format --check . && uv run pyright
 ```
 
-and put its password in `~/.pgpass` (`db.internal:5432:shop:reader:<password>`, mode 0600), as libpq normally reads
-it. Then ask Claude to report the `shop` source. No credential is ever a tool argument or output.
+`SIGNATURE_TEST_POSTGRES=host:port:database:user:password` (and `SIGNATURE_TEST_MYSQL`) runs the tests that
+connect a real database through the browser page.
+
+To try the whole thing in Claude Code before Signature-Platform has every endpoint, run the stand-in and point
+the plugin at it:
+
+```sh
+uv run signature-fake-backend --port 8790
+SIGNATURE_API_URL=http://127.0.0.1:8790 claude --plugin-dir plugins/signature
+```
+
+`SIGNATURE_API_URL` must be set until the key API's address is fixed in `.mcp.json`. The stand-in accepts
+any key.

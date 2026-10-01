@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}Review {{ domain_name }} · Signature{% endblock %}
+{% block content %}
+<h1>Review {{ domain_name }}</h1>
+<p class="lead">This is what Signature understood from your data and documents. Publish it when it's right;
+  otherwise say what's wrong and Signature will fix it.</p>
+<div class="card">
+  <p>{{ review.summary }}</p>
+  {% for section in review.sections %}
+    <h2>{{ section.title }}</h2>
+    <ul class="points">{% for point in section.points %}<li>{{ point }}</li>{% endfor %}</ul>
+  {% endfor %}
+</div>
+<form method="post" class="card" style="margin-top: 16px">
+  {% if error %}<div class="error">{{ error }}</div>{% endif %}
+  <div class="actions">
+    <button type="submit" name="decision" value="publish">Publish</button>
+  </div>
+  <details {% if form and form.decision == 'change' %}open{% endif %}>
+    <summary>Something's wrong</summary>
+    <label for="changes">What should change?</label>
+    <textarea id="changes" name="changes">{{ form.changes if form else '' }}</textarea>
+    <div class="actions"><button type="submit" name="decision" value="change" class="secondary">Send changes</button></div>
+  </details>
+</form>
+{% endblock %}

@@ -1,0 +1,22 @@
+#!/bin/sh
+# Runs one of the plugin's commands (signature-mcp, signature-show-answer) on the plugin's own pinned Python
+# environment. The customer installs nothing: uv is used if present, else fetched once into the plugin's
+# cache, and it fetches Python and the locked dependencies itself. Nothing but the command writes to stdout,
+# which carries the MCP protocol.
+set -eu
+
+root="$(cd "$(dirname "$0")/.." && pwd)"
+cache="${XDG_CACHE_HOME:-$HOME/.cache}/signature-plugin"
+
+uv="$(command -v uv || true)"
+if [ -z "$uv" ]; then
+  uv="$cache/uv/uv"
+  if [ ! -x "$uv" ]; then
+    mkdir -p "$cache/uv"
+    curl -LsSf https://astral.sh/uv/install.sh \
+      | env UV_INSTALL_DIR="$cache/uv" UV_NO_MODIFY_PATH=1 INSTALLER_NO_MODIFY_PATH=1 sh >&2
+  fi
+fi
+
+export UV_PROJECT_ENVIRONMENT="$cache/venv"
+exec "$uv" run --quiet --frozen --no-dev --project "$root/server" "$@"

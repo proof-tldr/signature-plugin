@@ -1,7 +1,7 @@
 {
   "name": "signature",
-  "version": "0.2.0",
-  "description": "Signature's MCP server, with answers shown to you and withheld from the model.",
+  "version": "0.3.0",
+  "description": "Build a Signature domain from your data and documents, and ask it questions answered by proven SQL run on your own machine.",
   "author": {
     "name": "Signature"
   },
@@ -9,7 +9,7 @@
     "api_key": {
       "type": "string",
       "title": "Signature API key",
-      "description": "Create one under Settings \u2192 API keys in Signature.",
+      "description": "The API key Signature gave you for your domain.",
       "sensitive": true,
       "required": true
     }

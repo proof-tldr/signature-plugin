@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "uv run --quiet --script \"${CLAUDE_PLUGIN_ROOT}/server/show_answer.py\""
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/signature\" signature-show-answer"
           }
         ]
       }
