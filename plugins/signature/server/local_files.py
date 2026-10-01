@@ -1,5 +1,5 @@
 """Which files on the member's machine a location names, and the format each is read as. A location is a path, a folder or a
-glob: only where to look, never what is in the files. Nothing here opens a file."""
+glob: only where to look, never what is in the files. Nothing here reads a file's contents."""
 
 import glob
 from dataclasses import dataclass
@@ -61,6 +61,9 @@ def source_name_of(absolute: str) -> str:
 
 
 def names_of(files: list[LocalFile]) -> list[str]:
-    """Each file's reported name, in the files' order: its stem, or the whole file name where two share a stem."""
+    """Each file's reported name, in the files' order: its stem, else its file name where two share a stem, else its
+    whole path where two share a file name (a recursive glob across folders)."""
     stems = [file.path.stem for file in files]
-    return [file.path.name if stems.count(file.path.stem) > 1 else file.path.stem for file in files]
+    file_names = [file.path.name for file in files]
+    return [str(file.path) if file_names.count(file.path.name) > 1
+            else file.path.name if stems.count(file.path.stem) > 1 else file.path.stem for file in files]

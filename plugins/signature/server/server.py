@@ -118,7 +118,7 @@ async def describe_dataset(domain_id: str, explanation: str, ctx: Context) -> Bu
 
 
 class SourceReported(TypedDict):
-    """What the model learns from report_source: which source, and how many tables, never the structure itself."""
+    """What the model learns from reporting a local source: which source, and how many tables, never the structure itself."""
     source: str
     tables: int
 

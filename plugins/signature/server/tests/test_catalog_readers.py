@@ -1,4 +1,4 @@
-"""A source the plugin cannot read is refused before any connection is made."""
+"""What the plugin reads of a local source, and the refusal of one it cannot read."""
 
 import asyncio
 from pathlib import Path

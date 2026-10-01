@@ -34,3 +34,9 @@ def test_files_sharing_a_stem_keep_their_extension():
 
 def test_a_home_relative_location_is_absolute():
     assert absolute_location('~/data').startswith('/')
+
+
+def test_files_sharing_a_file_name_in_different_folders_are_named_by_path():
+    files = [LocalFile(Path('/a/orders.csv'), FILE_FORMATS[0]), LocalFile(Path('/b/orders.csv'), FILE_FORMATS[0])]
+
+    assert names_of(files) == ['/a/orders.csv', '/b/orders.csv']
