@@ -218,7 +218,7 @@ def shown_and_told(ended: signature_api.Outcome) -> tuple[str, str]:
 async def through_signature[T](work: Callable[[signature_api.Signature], Awaitable[T]]) -> T:
     """The work done with Signature's API, its failures told to the model as tool errors."""
     try:
-        return await signature_api.in_session(work)
+        return await signature_api.with_signature(work)
     except signature_api.SignatureRefused as refused:
         raise ToolError(str(refused)) from refused
     except signature_api.DocumentRefused as refused:

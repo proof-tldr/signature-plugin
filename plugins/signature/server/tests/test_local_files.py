@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from local_files import LocalFile, absolute_location, files_at, names_of
+from local_files import FILE_FORMATS, LocalFile, absolute_location, files_at, names_of
 
 FILES = Path(__file__).parent / 'files'
 
@@ -26,10 +26,10 @@ def test_a_file_of_another_kind_is_not_readable(tmp_path):
 
 
 def test_files_sharing_a_stem_keep_their_extension():
-    files = [LocalFile(Path('a/orders.csv'), 'csv'), LocalFile(Path('a/orders.parquet'), 'parquet'),
-             LocalFile(Path('a/prices.csv'), 'csv')]
+    files = [LocalFile(Path('a/orders.csv'), FILE_FORMATS[0]), LocalFile(Path('a/orders.parquet'), FILE_FORMATS[2]),
+             LocalFile(Path('a/prices.csv'), FILE_FORMATS[0])]
 
-    assert list(names_of(files).values()) == ['orders.csv', 'orders.parquet', 'prices']
+    assert names_of(files) == ['orders.csv', 'orders.parquet', 'prices']
 
 
 def test_a_home_relative_location_is_absolute():

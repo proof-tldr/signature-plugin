@@ -62,13 +62,3 @@ def files_database(files: list[FileStructure]) -> Row:
          'columns': [{'name': column.name, 'nativeType': column.duckdb_type, 'nullable': column.nullable}
                      for column in file.columns]}
         for file in files]}}
-
-
-TABLES_OF = {
-    'postgresql': lambda catalog: sum(len(schema['relations']) for schema in catalog['schemas']),
-    'files': lambda catalog: len(catalog['files']),
-}
-
-
-def table_count(database: Row) -> int:
-    return TABLES_OF[database['adapter']](database['catalog'])

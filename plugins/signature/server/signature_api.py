@@ -1,5 +1,5 @@
-"""Signature's REST API as this machine reaches it, with the member's API key: the workspace's domains, and a
-question asked and followed to its outcome."""
+"""Signature's REST API as this machine reaches it, with the member's API key: the workspace's domains, questions
+asked and followed to their outcome, documents handed over, domains built, and local sources reported."""
 
 import asyncio
 import base64
@@ -64,7 +64,7 @@ type Outcome = Answered | Failed | StillWorking
 type Signature = httpx2.AsyncClient
 
 
-async def in_session[T](work: Callable[[Signature], Awaitable[T]]) -> T:
+async def with_signature[T](work: Callable[[Signature], Awaitable[T]]) -> T:
     """The work's result, done with one connection to Signature that presents the member's key."""
     async with httpx2.AsyncClient(base_url=os.environ['SIGNATURE_API_URL'],
                                   headers={'authorization': f'Bearer {os.environ["SIGNATURE_API_KEY"]}'},
@@ -81,9 +81,9 @@ async def body_of(signature: Signature, method: str, path: str, *, params: dict 
         raise SignatureUnreachable() from failure
     if response.status_code in (401, 403) and not is_problem(response):
         raise SignatureRefused(KEY_REJECTED)
-    if response.status_code >= 500 or not response.is_error:
-        if response.is_error:
-            raise SignatureUnreachable()
+    if response.status_code >= 500:
+        raise SignatureUnreachable()
+    if not response.is_error:
         return response.json()
     try:
         problem = response.json() if is_problem(response) else {}

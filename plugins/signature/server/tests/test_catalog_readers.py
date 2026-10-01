@@ -49,7 +49,7 @@ def test_a_glob_reads_only_what_it_matches():
 
 
 def test_a_location_with_no_files_is_refused():
-    with pytest.raises(SourceNotUsable, match='No csv'):
+    with pytest.raises(SourceNotUsable, match='No .csv'):
         asyncio.run(read_structure('files', str(FILES / 'nothing-here')))
 
 
@@ -59,3 +59,21 @@ def test_a_file_that_cannot_be_read_is_refused_without_quoting_it(tmp_path):
     with pytest.raises(SourceNotUsable, match='InvalidInputException') as refusal:
         asyncio.run(read_structure('files', str(tmp_path)))
     assert 'secret row value' not in str(refusal.value)
+
+
+def test_newline_delimited_json_is_read_like_json(tmp_path):
+    (tmp_path / 'log.jsonl').write_text('{"id": 1}\n{"id": 2}\n')
+    (tmp_path / 'more.ndjson').write_text('{"id": 3}\n')
+
+    structure = asyncio.run(read_structure('files', str(tmp_path)))
+
+    assert [file['name'] for file in structure.database['catalog']['files']] == ['log', 'more']
+
+
+def test_files_sharing_a_stem_are_reported_under_their_file_names(tmp_path):
+    (tmp_path / 'orders.csv').write_text('id\n1\n')
+    (tmp_path / 'orders.tsv').write_text('id\n1\n')
+
+    structure = asyncio.run(read_structure('files', str(tmp_path)))
+
+    assert [file['name'] for file in structure.database['catalog']['files']] == ['orders.csv', 'orders.tsv']

@@ -1,12 +1,31 @@
-"""Which files on the member's machine a location names, and in which format. A location is a path, a folder or a
+"""Which files on the member's machine a location names, and the format each is read as. A location is a path, a folder or a
 glob: only where to look, never what is in the files. Nothing here opens a file."""
 
 import glob
 from dataclasses import dataclass
 from pathlib import Path
 
-FORMAT_OF_SUFFIX = {'.csv': 'csv', '.tsv': 'tsv', '.parquet': 'parquet', '.json': 'json', '.jsonl': 'json',
-                    '.ndjson': 'json', '.xlsx': 'excel'}
+@dataclass(frozen=True)
+class FileFormat:
+    """One format DuckDB reads: the suffixes that name it, the query that describes its columns, and the extension
+    DuckDB needs loaded first."""
+    suffixes: tuple[str, ...]
+    describe: str
+    extension: str | None = None
+
+
+# https://duckdb.org/docs/stable/guides/meta/describe, https://duckdb.org/docs/stable/data/csv/auto_detection,
+# https://duckdb.org/docs/stable/data/parquet/overview, https://duckdb.org/docs/stable/data/json/overview,
+# https://duckdb.org/docs/stable/core_extensions/excel
+FILE_FORMATS = (
+    FileFormat(('.csv',), 'DESCRIBE SELECT * FROM read_csv_auto(?)'),
+    FileFormat(('.tsv',), "DESCRIBE SELECT * FROM read_csv(?, delim = '\t', header = true)"),
+    FileFormat(('.parquet',), 'DESCRIBE SELECT * FROM read_parquet(?)'),
+    FileFormat(('.json', '.jsonl', '.ndjson'), 'DESCRIBE SELECT * FROM read_json_auto(?)'),
+    FileFormat(('.xlsx',), 'DESCRIBE SELECT * FROM read_xlsx(?)', extension='excel'),
+)
+FORMAT_OF_SUFFIX = {suffix: file_format for file_format in FILE_FORMATS for suffix in file_format.suffixes}
+SUPPORTED_SUFFIXES = ', '.join(sorted(FORMAT_OF_SUFFIX))
 GLOB_CHARACTERS = '*?['
 
 
@@ -19,7 +38,7 @@ def absolute_location(location: str) -> str:
 class LocalFile:
     """A readable file a location names, and the format its suffix says it is."""
     path: Path
-    format: str
+    format: FileFormat
 
 
 def files_at(absolute: str) -> list[LocalFile]:
@@ -41,7 +60,7 @@ def source_name_of(absolute: str) -> str:
     return Path(absolute).name or absolute
 
 
-def names_of(files: list[LocalFile]) -> dict[Path, str]:
-    """Each file's reported name: its stem, or the whole file name where two share a stem."""
+def names_of(files: list[LocalFile]) -> list[str]:
+    """Each file's reported name, in the files' order: its stem, or the whole file name where two share a stem."""
     stems = [file.path.stem for file in files]
-    return {file.path: file.path.name if stems.count(file.path.stem) > 1 else file.path.stem for file in files}
+    return [file.path.name if stems.count(file.path.stem) > 1 else file.path.stem for file in files]
