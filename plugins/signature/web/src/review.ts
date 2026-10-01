@@ -1,5 +1,7 @@
-// The domain as the customer reviews it, read from Signature's model snapshot: its concepts and what they
-// record, the measures it can compute, the rules that always hold, and where each concept's data comes from.
+// What Signature understood about the customer's business, in the words a non-technical reviewer uses: the things
+// the business deals in and what is recorded about each, how those things connect, what can be calculated, and
+// what Signature will assume is always true. Read from Signature's model snapshot; database vocabulary (tables,
+// columns, types) stays out, apart from one plain line on where each thing's information comes from.
 
 type TypeExpression =
   | { kind: 'named'; name: string }
@@ -18,87 +20,101 @@ export type Snapshot = {
   mappings?: { id: string; entityId: string; databaseEntityId: string }[]
 }
 
-export type Field = { name: string; holds: string; meaning?: string; linksTo?: string }
-
-export type Concept = {
+export type Thing = {
   id: string
   name: string
   meaning?: string
-  fields: Field[]
-  rules: string[]
-  readFrom: string[]
+  tracked: string[]
+  assumptions: string[]
+  from?: string
 }
 
-export type Measure = { id: string; name: string; meaning?: string; conditions: string[] }
+// `label` names the arrow only when the connection's name differs from the thing it points at.
+export type Connection = { from: string; to: string; sentence: string; label?: string }
 
-export type Source = { id: string; name: string; kind?: string; tables: { id: string; name: string }[] }
+export type Calculation = { id: string; name: string; meaning?: string; conditions: string[] }
 
-export type Link = { from: string; to: string; label: string }
-
-export type Review = {
-  concepts: Concept[]
-  measures: Measure[]
-  rules: string[]
-  sources: Source[]
-  readings: { table: string; concept: string }[]
-  links: Link[]
+export type Understanding = {
+  things: Thing[]
+  connections: Connection[]
+  calculations: Calculation[]
+  assumptions: string[]
 }
 
-export function reviewOf(snapshot: Snapshot): Review {
+type Entity = NonNullable<Snapshot['entities']>[number]
+type Field = NonNullable<Snapshot['fields']>[number]
+
+export function understandingOf(snapshot: Snapshot): Understanding {
   const entities = snapshot.entities ?? []
   const fields = snapshot.fields ?? []
-  const mappings = snapshot.mappings ?? []
-  const tables = snapshot.databaseEntities ?? []
-  const tableNames = new Map(tables.map((table) => [table.id, table.relation]))
-  const sources = (snapshot.sources ?? []).map((source) => ({
-    id: source.id,
-    name: source.connection ?? source.namespace ?? source.file ?? source.id,
-    kind: source.kind,
-    tables: withoutSharedSchema(tables.filter((table) => table.sourceId === source.id)),
-  }))
-  const placeOf = new Map(
-    sources.flatMap((source) => source.tables.map((table) => [table.id, `${table.name} in ${source.name}`] as const)),
-  )
-  const conceptIds = new Map(entities.map((entity) => [entity.name, entity.id]))
-  const linkTarget = (type: TypeExpression) => conceptIds.get(leafName(type) ?? '')
-
+  const byName = new Map(entities.map((entity) => [entity.name, entity]))
+  const byId = new Map(entities.map((entity) => [entity.id, entity]))
+  const origins = originsOf(snapshot)
   return {
-    concepts: entities.map((entity) => ({
+    things: entities.map((entity) => ({
       id: entity.id,
-      name: entity.plural ?? entity.name,
+      name: plural(entity),
       meaning: entity.doc,
-      fields: fields
-        .filter((field) => field.entityId === entity.id)
-        .map((field) => ({ name: field.name, holds: typeName(field.type), meaning: field.doc, linksTo: linkTarget(field.type) })),
-      rules: (entity.invariants ?? []).map((invariant) => invariant.english),
-      readFrom: mappings
-        .filter((mapping) => mapping.entityId === entity.id)
-        .flatMap((mapping) => placeOf.get(mapping.databaseEntityId) ?? []),
+      tracked: fields.filter((field) => field.entityId === entity.id).map((field) => tracked(field, byName)),
+      assumptions: (entity.invariants ?? []).map((invariant) => invariant.english),
+      from: origins.get(entity.id),
     })),
-    measures: (snapshot.functions ?? []).map((fn) => ({
+    connections: fields.flatMap((field) => {
+      const owner = byId.get(field.entityId)
+      const target = byName.get(leafName(field.type) ?? '')
+      return owner && target && target.id !== owner.id ? [connection(owner, field, target)] : []
+    }),
+    calculations: (snapshot.functions ?? []).map((fn) => ({
       id: fn.id,
-      name: fn.name,
+      name: words(fn.name, { capitalised: true }),
       meaning: fn.doc,
       conditions: [...(fn.pre ?? []), ...(fn.post ?? [])].map((condition) => condition.english),
     })),
-    rules: (snapshot.axioms ?? []).map((axiom) => axiom.english),
-    sources,
-    readings: mappings
-      .filter((mapping) => tableNames.has(mapping.databaseEntityId))
-      .map((mapping) => ({ table: mapping.databaseEntityId, concept: mapping.entityId })),
-    links: fields.flatMap((field) => {
-      const target = linkTarget(field.type)
-      return target && target !== field.entityId ? [{ from: field.entityId, to: target, label: field.name }] : []
-    }),
+    assumptions: (snapshot.axioms ?? []).map((axiom) => axiom.english),
   }
 }
 
-// Table names without the schema every table in the source shares, as in "orders" for "public.orders".
-function withoutSharedSchema(tables: { id: string; relation: string }[]): { id: string; name: string }[] {
-  const schemas = new Set(tables.map((table) => (table.relation.includes('.') ? table.relation.split('.')[0] : '')))
-  const [shared] = schemas
-  const strip = schemas.size === 1 && shared ? `${shared}.` : ''
-  return tables.map((table) => ({ id: table.id, name: table.relation.slice(strip.length) }))
+// A field as a plain label, "Placed on" or "Status: pending, paid, refunded or cancelled". One pointing at another
+// thing says which, as "Billed to (a customer)", unless its name already does.
+function tracked(field: Field, things: Map<string, Entity>): string {
+  const label = words(field.name, { capitalised: true })
+  const target = things.get(leafName(field.type) ?? '')
+  const pointsAt = target && words(target.name) !== words(field.name) ? ` (${an(words(target.name))})` : ''
+  return `${label}${pointsAt}${field.doc ? `: ${lowerFirst(field.doc)}` : ''}`
+}
+
+function connection(owner: Entity, field: Field, target: Entity): Connection {
+  const many = field.type.kind === 'set' || field.type.kind === 'list'
+  const amount = many ? 'several' : field.type.kind === 'optional' ? 'at most one' : 'one'
+  const targetWords = many ? words(plural(target)) : words(target.name)
+  const namedAfterTarget = [words(target.name), words(plural(target))].includes(words(field.name))
+  return {
+    from: owner.id,
+    to: target.id,
+    sentence: `Each ${words(owner.name)} has ${amount} ${targetWords}${namedAfterTarget ? '' : `, its ${words(field.name)}`}.`,
+    label: namedAfterTarget ? undefined : words(field.name),
+  }
+}
+
+// Where each thing's information comes from, as "the orders table in your sales database" or "products.csv".
+function originsOf(snapshot: Snapshot): Map<string, string> {
+  const sources = new Map((snapshot.sources ?? []).map((source) => [source.id, source]))
+  const tables = new Map((snapshot.databaseEntities ?? []).map((table) => [table.id, table]))
+  const origins = new Map<string, string>()
+  for (const mapping of snapshot.mappings ?? []) {
+    const table = tables.get(mapping.databaseEntityId)
+    const source = table && sources.get(table.sourceId)
+    if (!table || !source) continue
+    const tableName = table.relation.split('.').at(-1) ?? table.relation
+    const place = source.file ?? `the ${words(tableName)} table in your ${source.connection ?? source.namespace ?? ''} database`
+    const earlier = origins.get(mapping.entityId)
+    origins.set(mapping.entityId, earlier ? `${earlier} and ${place}` : place)
+  }
+  return origins
+}
+
+function plural(entity: Entity): string {
+  return entity.plural ?? `${words(entity.name, { capitalised: true })}s`
 }
 
 function leafName(type: TypeExpression): string | undefined {
@@ -112,15 +128,20 @@ function leafName(type: TypeExpression): string | undefined {
   }
 }
 
-function typeName(type: TypeExpression): string {
-  switch (type.kind) {
-    case 'named':
-      return type.name
-    case 'optional':
-      return `${typeName(type.item)}, if known`
-    case 'tuple':
-      return type.items.map(typeName).join(' and ')
-    default:
-      return `several ${typeName(type.item)}`
-  }
+// "OrderLine", "order_line" and "orderLine" all read "order line".
+export function words(name: string, { capitalised = false } = {}): string {
+  const spaced = name
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .replace(/[_-]+/g, ' ')
+    .trim()
+    .toLowerCase()
+  return capitalised ? spaced.charAt(0).toUpperCase() + spaced.slice(1) : spaced
+}
+
+function an(noun: string): string {
+  return /^[aeiou]/.test(noun) ? `an ${noun}` : `a ${noun}`
+}
+
+function lowerFirst(text: string): string {
+  return /^[A-Z][a-z]/.test(text) ? text.charAt(0).toLowerCase() + text.slice(1) : text
 }
