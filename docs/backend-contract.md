@@ -29,49 +29,59 @@ id it chose: it reads the one domain the key opens from `GET /domains`.
 The plugin uploads each document exactly as the customer gave it, with `kind: "notes"`; it does not classify
 documents. A document `kind` that Signature can infer itself would remove that placeholder.
 
-## Source catalogs: the `duckdb` adapter (new)
+## How it fits together
 
-The customer's files and databases are opened together in one DuckDB on their machine. Each source is reported
-with `database: {adapter: "duckdb", catalog}`:
+1. **Build.** The plugin reports the customer's whole local DuckDB as **one catalog**, with a fingerprint of its
+   structure. The model conversation produces the domain's `signature.json` and `axioms.json`.
+2. **Publish.** The backend runs signiture-sql on that catalog's schema and the domain to build the package
+   (`apis.json`, `macros.json`, `sql.json`, proven metrics), stored with the published version and the
+   catalog's fingerprint.
+3. **Ask.** The plugin sends a question with the fingerprint of its sources now. A mismatch means the sources
+   changed after publishing, and the backend answers `stale`; otherwise signiture-sql writes proven DuckDB SQL,
+   which the plugin runs locally.
+
+Tracked in Signature-Platform #239 (generation and queries) and #240 (the catalog), and signiture-sql #4 (DuckDB
+dialect) and #5 (building from a reported catalog). For the demo, the few text values signiture-sql needs to
+match (statuses, region names) are written into the domain's notes by hand; the catalog carries no values.
+
+## Source catalog: one `duckdb` catalog (new, Signature-Platform #240)
+
+**Target; the plugin still reports one catalog per source with the older field names below until it is
+switched over.** Reported on every build under one fixed `sourceId` per domain, replacing the previous one, with
+`database: {adapter: "duckdb", catalog}`:
 
 ```json
-{
-  "tables": [
-    {
-      "schema": "public",
-      "name": "orders",
-      "sqlName": "\"sales\".\"public\".\"orders\"",
-      "columns": [
-        {"name": "status", "type": "VARCHAR", "nullable": true, "primaryKey": false,
-         "examples": ["paid", "refunded"]}
-      ]
-    }
-  ]
-}
+{"fingerprint": "sha256 of the tables below",
+ "tables": [
+   {"catalog": "memory", "schema": "files", "name": "products",
+    "columns": [{"name": "title", "nativeType": "VARCHAR", "nullable": true}],
+    "primaryKey": []},
+   {"catalog": "sales", "schema": "public", "name": "orders",
+    "columns": [{"name": "status", "nativeType": "VARCHAR", "nullable": true}],
+    "primaryKey": ["id"]}
+ ]}
 ```
 
-- `sqlName` is how Signature's SQL must name the table. Files are views `"files"."<source>"`; databases are
-  attached as catalogs, so their tables are `"<source>"."<schema>"."<table>"`.
-- `type` is DuckDB's type name, whatever the source's own type was.
-- `primaryKey` is known for PostgreSQL tables and is false elsewhere. Foreign keys are not reported yet.
-- `examples` holds up to five distinct values per column, from the first 1,000 rows, each at most 80
-  characters. They let Signature see codes and formats. Whole rows never leave the machine.
+- A table's SQL name is `"catalog"."schema"."name"`; data files are `"files"."<name>"`.
+- `nativeType` is DuckDB's type name, whatever the source's own type was.
+- No values from the data.
 
-## Queries (new)
+## Queries (new, Signature-Platform #239)
 
 The customer's data never leaves their machine, so Signature plans a query and the plugin runs it.
 
-`POST /domains/{id}/queries` `{idempotencyKey, question, threadId}` → `202 {id}`
+`POST /domains/{id}/queries` `{idempotencyKey, question, threadId, fingerprint}` → `202 {id}`
 
 `GET /domains/{id}/queries/{queryId}` →
 
 ```json
-{"id": "…", "threadId": "…", "state": "pending | planned | unanswerable | failed",
+{"id": "…", "threadId": "…", "state": "pending | planned | unanswerable | stale | failed",
  "reading": "what Signature understood the question to ask, in English",
- "sql": "one DuckDB SELECT over the reported sqlNames",
- "reason": "why it is unanswerable"}
+ "sql": "one DuckDB SELECT over the reported tables",
+ "reason": "why it is unanswerable or stale"}
 ```
 
 The plugin runs `sql` only if it is a single `SELECT` that calls no table function, on a DuckDB that is locked
 (`enable_external_access = false`, only the registered files readable, databases attached read-only), within
-120 seconds and 10,000 rows. It shows the customer `reading` and the rows; Claude sees neither.
+120 seconds and 10,000 rows. It shows the customer `reading` and the rows; Claude sees neither. On `stale` it
+tells the customer their sources changed and rebuilds before asking again.
