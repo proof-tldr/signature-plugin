@@ -1,24 +1,12 @@
 {
   "hooks": {
-    "PreToolUse": [
-      {
-        "matcher": "mcp__plugin_signature_signature__get_answer",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "echo '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Answers are shown only to the user. Do not try to read them.\"}}'"
-          }
-        ]
-      }
-    ],
     "PostToolUse": [
       {
         "matcher": "mcp__plugin_signature_signature__ask_question",
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/show-answer.mjs\"",
-            "timeout": 600
+            "command": "uv run --quiet --script \"${CLAUDE_PLUGIN_ROOT}/server/show_answer.py\""
           }
         ]
       }

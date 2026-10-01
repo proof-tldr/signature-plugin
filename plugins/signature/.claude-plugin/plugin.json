@@ -1,6 +1,6 @@
 {
   "name": "signature",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Signature's MCP server, with answers shown to you and withheld from the model.",
   "author": {
     "name": "Signature"
