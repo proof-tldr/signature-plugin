@@ -3,7 +3,7 @@
     "command": "uv",
     "args": ["run", "--quiet", "--script", "${CLAUDE_PLUGIN_ROOT}/server/server.py"],
     "env": {
-      "SIGNATURE_API_URL": "KEY_API_URL_PENDING_DEPLOY",
+      "SIGNATURE_API_URL": "https://d2378glmrsgsno.cloudfront.net",
       "SIGNATURE_API_KEY": "${user_config.api_key}"
     }
   }
