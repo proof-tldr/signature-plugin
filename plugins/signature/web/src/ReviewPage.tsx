@@ -1,27 +1,29 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { BoxIcon, CheckIcon, ChevronDownIcon, DatabaseIcon, LinkIcon, ShieldCheckIcon, SigmaIcon, XIcon } from 'lucide-react'
+import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react'
 
 import { submit } from './api'
 import { Notice } from './App'
 import { ConnectionsDiagram } from './ConnectionsDiagram'
 import { type Snapshot, type Thing, type Understanding, understandingOf } from './review'
+import { Button, Card, IconBadge, Row, SectionHeading, Tag } from './ui'
 
 type ReviewPageProps = { domain: string; snapshot: Snapshot }
 type Verdict = 'right' | 'wrong'
 type Item = { key: string; subject: string }
 
-const CONNECTIONS: Item = { key: 'connections', subject: 'How my business fits together' }
+const CONNECTIONS: Item = { key: 'connections', subject: 'How it fits together' }
 
 export function ReviewPage({ domain, snapshot }: ReviewPageProps) {
   const understanding = useMemo(() => understandingOf(snapshot), [snapshot])
   const items = useMemo(() => itemsOf(understanding), [understanding])
   const [verdicts, setVerdicts] = useState<Record<string, Verdict>>({})
-  const [selected, setSelected] = useState<string | null>(null)
+  const [open, setOpen] = useState<string | null>(null)
   const [note, setNote] = useState<string | null>(null)
   const [sending, setSending] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [decided, setDecided] = useState<'published' | 'changes' | null>(null)
 
-  const judge = (item: Item, verdict: Verdict) => {
+  const judge = (item: Item) => (verdict: Verdict) => {
     setVerdicts((current) => ({ ...current, [item.key]: verdict }))
     if (verdict === 'wrong')
       setNote((current) => {
@@ -40,136 +42,122 @@ export function ReviewPage({ domain, snapshot }: ReviewPageProps) {
   }
 
   if (decided === 'published')
-    return <Notice title={`${domain} is published`} body="Go back to Claude to ask Signature your questions." />
+    return <Notice title={`${domain} is published`} body="Go back to Claude to ask your questions." />
   if (decided === 'changes')
-    return (
-      <Notice
-        title="Signature is fixing what you flagged"
-        body="Go back to Claude. It will bring you back here to check again once the changes are in."
-      />
-    )
+    return <Notice title="Changes sent" body="Go back to Claude. It brings you back here once they are in." />
 
   const checked = items.filter((item) => verdicts[item.key] === 'right').length
   const flagged = items.filter((item) => verdicts[item.key] === 'wrong').length
-  const judgeItem = (item: Item) => (verdict: Verdict) => judge(item, verdict)
 
   return (
-    <div className="min-h-full pb-28">
-      <header className="border-b border-line">
-        <div className="mx-auto flex max-w-[46rem] items-center gap-3 px-5 py-3">
-          <p className="text-sm font-semibold text-muted" translate="no">
+    <div className="min-h-full">
+      <header className="sticky top-0 z-10 border-b border-border bg-background/95 backdrop-blur">
+        <div className="mx-auto flex h-14 max-w-[56rem] items-center gap-3 px-6">
+          <p className="font-semibold" translate="no">
             Signature
           </p>
-          <p className="min-w-0 truncate font-serif text-lg">{domain}</p>
+          <span className="text-faint">/</span>
+          <p className="min-w-0 flex-1 truncate text-muted-foreground">{domain}</p>
+          <p className="hidden text-muted-foreground tabular-nums sm:block" aria-live="polite">
+            {checked} of {items.length} checked
+          </p>
+          {flagged > 0 ? (
+            <Button variant="primary" onClick={() => setNote((current) => current ?? '')}>
+              Send {flagged} to fix
+            </Button>
+          ) : (
+            <Button variant="primary" disabled={sending} onClick={() => decide('publish')}>
+              Publish
+            </Button>
+          )}
         </div>
+        {error && note === null ? (
+          <p role="alert" className="mx-auto max-w-[56rem] px-6 pb-3 text-destructive">
+            {error}
+          </p>
+        ) : null}
       </header>
 
-      <main className="mx-auto max-w-[46rem] px-5 pt-12">
-        <h1 className="font-serif text-[2.1rem] leading-tight text-balance sm:text-[2.5rem]">
-          Check what Signature understood about {domain}
-        </h1>
+      <main className="mx-auto max-w-[56rem] px-6 pt-8 pb-24">
+        <h1 className="text-heading-2xl text-balance">Review {domain}</h1>
 
         {understanding.connections.length > 0 ? (
-          <Part
-            title="How your business fits together"
-          >
-            <div className="mt-2 h-64 overflow-hidden rounded-lg bg-canvas">
-              <ConnectionsDiagram understanding={understanding} selected={selected} onSelect={setSelected} />
-            </div>
-            <ul className="mt-6 space-y-2 font-serif text-[1.15rem] leading-relaxed">
+          <section className="mt-10">
+            <SectionHeading actions={<Verdicts verdict={verdicts[CONNECTIONS.key]} onJudge={judge(CONNECTIONS)} />}>
+              How it fits together
+            </SectionHeading>
+            <Card>
+              <div className="h-56 border-b border-border">
+                <ConnectionsDiagram understanding={understanding} selected={open} onSelect={setOpen} />
+              </div>
               {understanding.connections.map((connection) => (
-                <li key={connection.sentence}>{connection.sentence}</li>
+                <Row key={connection.sentence}>
+                  <IconBadge tone="attr">
+                    <LinkIcon />
+                  </IconBadge>
+                  <p className="pt-1.5">{connection.sentence}</p>
+                </Row>
               ))}
-            </ul>
-            <Verdicts verdict={verdicts[CONNECTIONS.key]} onJudge={judgeItem(CONNECTIONS)} />
-          </Part>
+            </Card>
+          </section>
         ) : null}
 
-        <Part title="Each thing in detail">
-          {understanding.things.map((thing) => (
-            <ThingEntry
-              key={thing.id}
-              thing={thing}
-              selected={selected === thing.id}
-              verdict={verdicts[thing.id]}
-              onJudge={judgeItem({ key: thing.id, subject: thing.name })}
-            />
-          ))}
-        </Part>
+        <section className="mt-10">
+          <SectionHeading>Things</SectionHeading>
+          <Card>
+            {understanding.things.map((thing) => (
+              <ThingRow
+                key={thing.id}
+                thing={thing}
+                open={open === thing.id}
+                onToggle={() => setOpen((current) => (current === thing.id ? null : thing.id))}
+                verdict={verdicts[thing.id]}
+                onJudge={judge({ key: thing.id, subject: thing.name })}
+              />
+            ))}
+          </Card>
+        </section>
 
         {understanding.calculations.length > 0 ? (
-          <Part title="What you can ask about">
-            {understanding.calculations.map((calculation) => (
-              <Entry key={calculation.id}>
-                <h3 className="font-serif text-[1.5rem] leading-tight text-balance">{calculation.name}</h3>
-                {calculation.meaning ? <Prose>{calculation.meaning}</Prose> : null}
-                {calculation.conditions.map((condition) => (
-                  <Prose key={condition}>{condition}</Prose>
-                ))}
-                <Verdicts
-                  verdict={verdicts[calculation.id]}
-                  onJudge={judgeItem({ key: calculation.id, subject: calculation.name })}
-                />
-              </Entry>
-            ))}
-          </Part>
+          <section className="mt-10">
+            <SectionHeading>Calculations</SectionHeading>
+            <Card>
+              {understanding.calculations.map((calculation) => (
+                <Row key={calculation.id}>
+                  <IconBadge tone="calc">
+                    <SigmaIcon />
+                  </IconBadge>
+                  <Words title={calculation.name} lines={[calculation.meaning, ...calculation.conditions]} />
+                  <Verdicts
+                    verdict={verdicts[calculation.id]}
+                    onJudge={judge({ key: calculation.id, subject: calculation.name })}
+                  />
+                </Row>
+              ))}
+            </Card>
+          </section>
         ) : null}
 
         {understanding.assumptions.length > 0 ? (
-          <Part
-            title="What Signature assumes is always true"
-          >
-            {understanding.assumptions.map((assumption, index) => {
-              const item = { key: `assumption-${index}`, subject: assumption }
-              return (
-                <Entry key={item.key}>
-                  <Prose>{assumption}</Prose>
-                  <Verdicts verdict={verdicts[item.key]} onJudge={judgeItem(item)} />
-                </Entry>
-              )
-            })}
-          </Part>
+          <section className="mt-10">
+            <SectionHeading>Always true</SectionHeading>
+            <Card>
+              {understanding.assumptions.map((assumption, index) => {
+                const item = { key: `assumption-${index}`, subject: assumption }
+                return (
+                  <Row key={item.key}>
+                    <IconBadge tone="fact">
+                      <ShieldCheckIcon />
+                    </IconBadge>
+                    <p className="min-w-0 flex-1 pt-1.5">{assumption}</p>
+                    <Verdicts verdict={verdicts[item.key]} onJudge={judge(item)} />
+                  </Row>
+                )
+              })}
+            </Card>
+          </section>
         ) : null}
       </main>
-
-      <footer className="fixed inset-x-0 bottom-0 border-t border-line bg-paper/95 backdrop-blur">
-        <div className="mx-auto flex max-w-[46rem] flex-wrap items-center gap-x-4 gap-y-2 px-5 py-3">
-          <p className="flex-1 text-[15px] text-muted" aria-live="polite">
-            <span className="font-semibold text-ink tabular-nums">
-              {checked} of {items.length}
-            </span>{' '}
-            checked
-            {flagged > 0 ? (
-              <>
-                , <span className="font-semibold text-flag tabular-nums">{flagged}</span> to fix
-              </>
-            ) : null}
-          </p>
-          {error && note === null ? (
-            <p role="alert" className="w-full text-sm text-flag sm:order-last">
-              {error}
-            </p>
-          ) : null}
-          {flagged > 0 ? (
-            <button
-              type="button"
-              onClick={() => setNote((current) => current ?? '')}
-              className="rounded-md bg-ink px-4 py-2 text-sm font-semibold text-paper hover:bg-ink/85"
-            >
-              Tell Signature what to fix
-            </button>
-          ) : (
-            <button
-              type="button"
-              disabled={sending}
-              onClick={() => decide('publish')}
-              className="rounded-md bg-signature px-4 py-2 text-sm font-semibold text-signature-ink hover:brightness-110 disabled:opacity-60"
-            >
-              {checked === items.length ? 'Publish' : 'Publish anyway'}
-            </button>
-          )}
-        </div>
-      </footer>
 
       {note !== null ? (
         <ChangeNote
@@ -197,95 +185,144 @@ function itemsOf(understanding: Understanding): Item[] {
   ]
 }
 
-function Part({ title, children }: { title: string; children: React.ReactNode }) {
+function Words({ title, lines }: { title: string; lines: (string | undefined)[] }) {
   return (
-    <section className="mt-16">
-      <h2 className="mb-4 font-serif text-[1.75rem] leading-tight text-balance">{title}</h2>
-      {children}
-    </section>
+    <div className="min-w-0 flex-1 pt-1">
+      <p className="font-medium">{title}</p>
+      {lines.filter(Boolean).map((line) => (
+        <p key={line} className="mt-0.5 text-muted-foreground">
+          {line}
+        </p>
+      ))}
+    </div>
   )
 }
 
-function Entry({ children }: { children: React.ReactNode }) {
-  return <div className="border-t border-line py-6">{children}</div>
-}
-
-function Prose({ children }: { children: React.ReactNode }) {
-  return <p className="mt-2 max-w-[38rem] font-serif text-[1.15rem] leading-relaxed">{children}</p>
-}
-
-type ThingEntryProps = {
+type ThingRowProps = {
   thing: Thing
-  selected: boolean
+  open: boolean
+  onToggle: () => void
   verdict: Verdict | undefined
   onJudge: (verdict: Verdict) => void
 }
 
-function ThingEntry({ thing, selected, verdict, onJudge }: ThingEntryProps) {
-  const entry = useRef<HTMLDivElement>(null)
+function ThingRow({ thing, open, onToggle, verdict, onJudge }: ThingRowProps) {
+  const row = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
-    if (!selected) return
+    if (!open) return
     const smooth = !window.matchMedia('(prefers-reduced-motion: reduce)').matches
-    entry.current?.scrollIntoView({ behavior: smooth ? 'smooth' : 'auto', block: 'start' })
-  }, [selected])
+    row.current?.scrollIntoView({ behavior: smooth ? 'smooth' : 'auto', block: 'nearest' })
+  }, [open])
 
   return (
-    <div ref={entry} className={`scroll-mt-6 border-t py-6 ${selected ? 'border-signature' : 'border-line'}`}>
-      <h3 className={`font-serif text-[1.5rem] leading-tight text-balance ${selected ? 'text-signature' : ''}`}>
-        {thing.name}
-      </h3>
-      {thing.meaning ? <Prose>{thing.meaning}</Prose> : null}
+    <div ref={row} className={`scroll-mt-20 border-t border-border first:border-t-0 ${open ? 'bg-selected' : ''}`}>
+      <div className="flex flex-wrap items-start gap-3 px-4 py-3">
+        <IconBadge tone="type">
+          <BoxIcon />
+        </IconBadge>
+        <button
+          type="button"
+          onClick={onToggle}
+          aria-expanded={open}
+          className="focus-ring min-w-0 flex-1 rounded-(--radius-row) pt-1 text-left"
+        >
+          <span className="flex items-center gap-1.5 font-medium">
+            {thing.name}
+            <ChevronDownIcon className={`size-4 text-faint transition-transform ${open ? 'rotate-180' : ''}`} aria-hidden />
+          </span>
+          {thing.meaning ? <span className="mt-0.5 block text-muted-foreground">{thing.meaning}</span> : null}
+        </button>
+        <Verdicts verdict={verdict} onJudge={onJudge} />
+      </div>
+      {open ? <ThingDetails thing={thing} /> : null}
+    </div>
+  )
+}
+
+function ThingDetails({ thing }: { thing: Thing }) {
+  return (
+    <div className="space-y-4 px-4 pb-4 pl-14">
       {thing.tracked.length > 0 ? (
-        <>
-          <p className="mt-4 text-[15px] text-muted">Signature keeps track of:</p>
-          <ul className="mt-1.5 list-disc space-y-1 pl-5 text-[16px] leading-relaxed marker:text-line">
-            {thing.tracked.map((line) => (
-              <li key={line} className="break-words">
-                {line}
-              </li>
+        <table className="w-full overflow-hidden rounded-(--radius-row) border border-border bg-card text-left">
+          <thead className="bg-band text-muted-foreground">
+            <tr>
+              <th className="px-3 py-2 font-medium">Detail</th>
+              <th className="px-3 py-2 font-medium">Kind</th>
+              <th className="px-3 py-2 font-medium">Meaning</th>
+            </tr>
+          </thead>
+          <tbody>
+            {thing.tracked.map((detail) => (
+              <tr key={detail.name} className="border-t border-border align-top">
+                <td className="px-3 py-2 font-medium break-words">{detail.name}</td>
+                <td className="px-3 py-2">
+                  <span className="flex flex-wrap gap-1">
+                    <Tag>{detail.kind}</Tag>
+                    {detail.canBeEmpty ? <Tag>Can be empty</Tag> : null}
+                  </span>
+                </td>
+                <td className="px-3 py-2 break-words text-muted-foreground">{detail.meaning ?? ''}</td>
+              </tr>
             ))}
-          </ul>
-        </>
+          </tbody>
+        </table>
       ) : null}
-      {thing.assumptions.length > 0 ? (
-        <>
-          <p className="mt-4 text-[15px] text-muted">It assumes:</p>
-          {thing.assumptions.map((assumption) => (
-            <Prose key={assumption}>{assumption}</Prose>
-          ))}
-        </>
+      {thing.assumptions.map((assumption) => (
+        <p key={assumption} className="flex gap-2">
+          <ShieldCheckIcon className="mt-0.5 size-4 shrink-0 text-fact-text" aria-hidden />
+          {assumption}
+        </p>
+      ))}
+      {thing.from ? (
+        <Tag tone="outline">
+          <DatabaseIcon aria-hidden />
+          From {thing.from}
+        </Tag>
       ) : null}
-      {thing.from ? <p className="mt-4 text-sm text-muted">Comes from {thing.from}.</p> : null}
-      <Verdicts verdict={verdict} onJudge={onJudge} />
     </div>
   )
 }
 
 function Verdicts({ verdict, onJudge }: { verdict: Verdict | undefined; onJudge: (verdict: Verdict) => void }) {
   return (
-    <div className="mt-5 flex gap-2">
-      <button
-        type="button"
-        aria-pressed={verdict === 'right'}
-        onClick={() => onJudge('right')}
-        className={`rounded-full border px-3.5 py-1.5 text-sm ${
-          verdict === 'right' ? 'border-signature bg-signature text-signature-ink' : 'border-line hover:border-ink/40'
-        }`}
-      >
-        {verdict === 'right' ? '✓ Looks right' : 'Looks right'}
-      </button>
-      <button
-        type="button"
-        aria-pressed={verdict === 'wrong'}
-        onClick={() => onJudge('wrong')}
-        className={`rounded-full border px-3.5 py-1.5 text-sm ${
-          verdict === 'wrong' ? 'border-flag bg-flag-wash text-flag' : 'border-line hover:border-ink/40'
-        }`}
-      >
+    <div className="flex shrink-0 gap-1.5">
+      <Choice pressed={verdict === 'right'} tone="right" onClick={() => onJudge('right')} icon={<CheckIcon />}>
+        Looks right
+      </Choice>
+      <Choice pressed={verdict === 'wrong'} tone="wrong" onClick={() => onJudge('wrong')} icon={<XIcon />}>
         Not quite
-      </button>
+      </Choice>
     </div>
+  )
+}
+
+function Choice({
+  pressed,
+  tone,
+  onClick,
+  icon,
+  children,
+}: {
+  pressed: boolean
+  tone: Verdict
+  onClick: () => void
+  icon: ReactNode
+  children: ReactNode
+}) {
+  const on = tone === 'right' ? 'border-transparent bg-success-soft text-success' : 'border-transparent bg-destructive-soft text-destructive'
+  return (
+    <button
+      type="button"
+      aria-pressed={pressed}
+      onClick={onClick}
+      className={`focus-ring inline-flex h-7 items-center gap-1 rounded-full border px-2.5 text-xs font-medium transition-colors [&>svg]:size-3.5 ${
+        pressed ? on : 'border-input bg-card text-muted-foreground hover:bg-muted hover:text-foreground'
+      }`}
+    >
+      {icon}
+      {children}
+    </button>
   )
 }
 
@@ -311,39 +348,31 @@ function ChangeNote({ note, error, sending, onChange, onSend, onClose }: ChangeN
   return (
     <aside
       onKeyDown={(event) => event.key === 'Escape' && onClose()}
-      className="fixed inset-x-0 bottom-0 z-10 border-t border-line bg-paper shadow-[0_-12px_32px_-24px_rgb(0_0_0/0.35)] sm:inset-x-auto sm:top-0 sm:right-0 sm:w-[26rem] sm:border-t-0 sm:border-l"
-      aria-label="What Signature should fix"
+      className="fixed inset-x-3 bottom-3 z-20 rounded-(--radius-surface) border border-border bg-card shadow-overlay sm:inset-x-auto sm:top-[4.5rem] sm:right-4 sm:bottom-4 sm:w-[24rem]"
+      aria-label="What to fix"
     >
-      <div className="flex h-full flex-col p-6">
-        <div className="flex items-baseline justify-between">
-          <h2 className="font-serif text-2xl">What should Signature fix?</h2>
-          <button type="button" onClick={onClose} className="text-sm text-muted hover:text-ink">
-            Close
-          </button>
+      <div className="flex h-full flex-col p-4">
+        <div className="flex items-center justify-between">
+          <h2 className="text-heading-sm">What to fix</h2>
+          <Button variant="ghost" onClick={onClose} aria-label="Close">
+            <XIcon />
+          </Button>
         </div>
-        <p className="mt-2 text-sm text-muted">
-          Say what is wrong in your own words. Signature fixes it, then you check again.
-        </p>
         <textarea
           ref={field}
           value={note}
           onChange={(event) => onChange(event.target.value)}
-          placeholder="For example: a refunded order should not count as revenue…"
-          className="mt-4 min-h-40 flex-1 resize-none overscroll-contain rounded-md border border-line bg-paper p-3 font-serif text-[1.05rem] leading-relaxed sm:min-h-0"
+          placeholder="A refunded order should not count as revenue…"
+          className="mt-3 min-h-36 flex-1 resize-none overscroll-contain rounded-(--radius-row) border border-input bg-card p-3 text-body-reading focus:border-ring focus:outline-none sm:min-h-0"
         />
         {error ? (
-          <p role="alert" className="mt-3 rounded-md bg-flag-wash px-3 py-2 text-sm text-flag">
+          <p role="alert" className="mt-3 rounded-(--radius-row) bg-destructive-soft px-3 py-2 text-destructive">
             {error}
           </p>
         ) : null}
-        <button
-          type="button"
-          disabled={sending || note.trim() === ''}
-          onClick={onSend}
-          className="mt-4 rounded-md bg-ink px-4 py-2.5 text-sm font-semibold text-paper hover:bg-ink/85 disabled:opacity-40"
-        >
+        <Button variant="primary" className="mt-3 justify-center" disabled={sending || note.trim() === ''} onClick={onSend}>
           Send to Signature
-        </button>
+        </Button>
       </div>
     </aside>
   )

@@ -20,11 +20,14 @@ export type Snapshot = {
   mappings?: { id: string; entityId: string; databaseEntityId: string }[]
 }
 
+// One thing Signature keeps track of, named in the reader's words: "Placed on", a date.
+export type Detail = { name: string; kind: string; meaning?: string; canBeEmpty: boolean }
+
 export type Thing = {
   id: string
   name: string
   meaning?: string
-  tracked: string[]
+  tracked: Detail[]
   assumptions: string[]
   from?: string
 }
@@ -74,13 +77,45 @@ export function understandingOf(snapshot: Snapshot): Understanding {
   }
 }
 
-// A field as a plain label, "Placed on" or "Status: pending, paid, refunded or cancelled". One pointing at another
-// thing says which, as "Billed to (a customer)", unless its name already does.
-function tracked(field: Field, things: Map<string, Entity>): string {
-  const label = words(field.name, { capitalised: true })
-  const target = things.get(leafName(field.type) ?? '')
-  const pointsAt = target && words(target.name) !== words(field.name) ? ` (${an(words(target.name))})` : ''
-  return `${label}${pointsAt}${field.doc ? `: ${lowerFirst(field.doc)}` : ''}`
+function tracked(field: Field, things: Map<string, Entity>): Detail {
+  return {
+    name: words(field.name, { capitalised: true }),
+    kind: kindOf(field.type, things),
+    meaning: field.doc,
+    canBeEmpty: field.type.kind === 'optional',
+  }
+}
+
+// What kind of value a field holds, as a reader would say it: "Text", "Date", "A customer", "Several products".
+const KINDS: Record<string, string> = {
+  string: 'Text',
+  text: 'Text',
+  integer: 'Number',
+  'whole number': 'Number',
+  real: 'Number',
+  number: 'Number',
+  boolean: 'Yes or no',
+  date: 'Date',
+  timestamp: 'Date and time',
+  money: 'Money',
+}
+
+function kindOf(type: TypeExpression, things: Map<string, Entity>): string {
+  switch (type.kind) {
+    case 'named': {
+      const thing = things.get(type.name)
+      if (thing) return words(an(words(thing.name)), { capitalised: true })
+      return KINDS[words(type.name)] ?? words(type.name, { capitalised: true })
+    }
+    case 'optional':
+      return kindOf(type.item, things)
+    case 'tuple':
+      return 'Several values'
+    default: {
+      const thing = things.get(leafName(type.item) ?? '')
+      return thing ? `Several ${words(plural(thing))}` : `Several ${kindOf(type.item, things).toLowerCase()}`
+    }
+  }
 }
 
 function connection(owner: Entity, field: Field, target: Entity): Connection {
@@ -142,6 +177,3 @@ function an(noun: string): string {
   return /^[aeiou]/.test(noun) ? `an ${noun}` : `a ${noun}`
 }
 
-function lowerFirst(text: string): string {
-  return /^[A-Z][a-z]/.test(text) ? text.charAt(0).toLowerCase() + text.slice(1) : text
-}

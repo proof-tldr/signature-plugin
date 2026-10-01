@@ -19,11 +19,11 @@ export function App() {
 export function Notice({ title, body }: { title: string; body: string }) {
   return (
     <main className="mx-auto flex min-h-full max-w-xl flex-col justify-center px-6 py-16">
-      <p className="mb-10 text-sm font-semibold text-muted" translate="no">
+      <p className="mb-8 font-semibold" translate="no">
         Signature
       </p>
-      <h1 className="font-serif text-4xl leading-tight text-balance">{title}</h1>
-      <p className="mt-4 text-lg text-muted">{body}</p>
+      <h1 className="text-heading-2xl text-balance">{title}</h1>
+      <p className="mt-2 text-body-reading text-muted-foreground">{body}</p>
     </main>
   )
 }

@@ -1,10 +1,13 @@
 import { expect, test } from '@playwright/test'
 
-test('picking a thing in the diagram brings its description into view', async ({ page }) => {
+test('picking a thing in the diagram opens its row', async ({ page }) => {
   await page.goto('/')
   await page.locator('.react-flow__node-thing', { hasText: 'Products' }).click()
 
-  await expect(page.getByRole('heading', { name: 'Products', exact: true })).toBeInViewport()
+  const row = page.getByRole('button', { name: /^Products/ })
+  await expect(row).toHaveAttribute('aria-expanded', 'true')
+  await expect(row).toBeInViewport()
+  await expect(page.getByText('From products.csv')).toBeVisible()
 })
 
 test('marking everything right counts it and lets the customer publish', async ({ page }) => {
@@ -12,7 +15,7 @@ test('marking everything right counts it and lets the customer publish', async (
   const total = await page.getByRole('button', { name: 'Looks right' }).count()
   for (const button of await page.getByRole('button', { name: 'Looks right' }).all()) await button.click()
 
-  await expect(page.getByText(`${total} of ${total}`)).toBeVisible()
+  await expect(page.getByText(`${total} of ${total} checked`)).toBeVisible()
   await page.getByRole('button', { name: 'Publish', exact: true }).click()
   await expect(page.getByRole('heading', { name: 'Acme Supply is published' })).toBeVisible()
 })
@@ -26,14 +29,16 @@ test('marking something not quite starts a note naming it and sends it to Signat
   await expect(note).toBeFocused()
   await note.pressSequentially('test accounts are customers too')
   await page.getByRole('button', { name: 'Send to Signature' }).click()
-  await expect(page.getByRole('heading', { name: 'Signature is fixing what you flagged' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Changes sent' })).toBeVisible()
 })
 
-test('the page speaks the customer\'s language, not the database\'s', async ({ page }) => {
+test("the page speaks the customer's language, not the database's", async ({ page }) => {
   await page.goto('/')
+  await page.getByRole('button', { name: /^Orders/ }).click()
   await expect(page.getByText('Each order has one customer.')).toBeVisible()
-  await expect(page.getByText('Comes from the orders table in your sales database.')).toBeVisible()
-  for (const jargon of ['public.', 'PostgreSQL', 'order_lines', 'entity', 'field']) {
+  await expect(page.getByText('From the orders table in your sales database')).toBeVisible()
+  await expect(page.getByRole('cell', { name: 'Placed on' })).toBeVisible()
+  for (const jargon of ['public.', 'PostgreSQL', 'order_lines', 'entity', 'field', 'string']) {
     await expect(page.getByText(jargon, { exact: false })).toHaveCount(0)
   }
 })
