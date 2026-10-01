@@ -38,6 +38,8 @@ class FakeSignature:
     source_id: str | None = None
     catalog: dict[str, Any] | None = None
     published_fingerprint: str | None = None
+    # Why getting the published domain ready to answer questions fails, or None when it succeeds.
+    preparation_failure: str | None = None
     turns: dict[str, dict[str, Any]] = field(default_factory=dict[str, dict[str, Any]])
     questions: dict[str, dict[str, Any]] = field(default_factory=dict[str, dict[str, Any]])
     queries: dict[str, dict[str, Any]] = field(default_factory=dict[str, dict[str, Any]])
@@ -63,6 +65,7 @@ class FakeSignature:
                 ),
                 Route(f'{domain}/model/snapshot', self.model_snapshot),
                 Route(f'{domain}/publish', self.publish, methods=['POST']),
+                Route(f'{domain}/query-package', self.preparation),
                 Route(f'{domain}/queries', self.plan_query, methods=['POST']),
                 Route(f'{domain}/queries/{{query_id}}', self.get_query),
             ]
@@ -178,6 +181,15 @@ class FakeSignature:
         self.published_at = datetime.now(UTC).isoformat()
         self.published_fingerprint = self.catalog['fingerprint'] if self.catalog else None
         return JSONResponse({'publishedAt': self.published_at})
+
+    async def preparation(self, _request: Request) -> Response:
+        """The query package a publication of reported local data is built into: built at once, here."""
+        if self.published_fingerprint is None:
+            return _problem(404, 'No query package')
+        status = 'failed' if self.preparation_failure else 'succeeded'
+        return JSONResponse(
+            {'status': status, 'reason': self.preparation_failure, 'fingerprint': self.published_fingerprint}
+        )
 
     async def plan_query(self, request: Request) -> Response:
         body = await request.json()

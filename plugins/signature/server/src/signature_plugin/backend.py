@@ -60,6 +60,22 @@ class OpenQuestion:
     suggested_answers: list[str]
 
 
+type PreparationState = Literal['queued', 'running', 'failed', 'succeeded']
+
+
+@dataclass(frozen=True)
+class Preparation:
+    """Where Signature stands in getting a published domain ready to answer questions: it builds the proven
+    package questions are answered from after each publication."""
+
+    state: PreparationState
+    reason: str | None
+
+    @property
+    def underway(self) -> bool:
+        return self.state in ('queued', 'running')
+
+
 type QueryState = Literal['pending', 'planned', 'unanswerable', 'stale', 'failed']
 
 
@@ -168,6 +184,12 @@ class Signature:
 
     async def publish(self) -> None:
         await _body(self._client, 'POST', f'/domains/{self.domain_id}/publish', json={})
+
+    async def preparation(self) -> Preparation | None:
+        """How far Signature is in getting the published domain ready to answer questions; None when the last
+        publication needs no preparation, as one without the customer's local data."""
+        found = await _body(self._client, 'GET', f'/domains/{self.domain_id}/query-package', absent_ok=True)
+        return Preparation(state=found['status'], reason=found.get('reason')) if found else None
 
     async def plan_query(self, question: str, thread_id: str | None, fingerprint: str) -> str:
         """The question handed to Signature to plan, with the fingerprint of the customer's sources as they are

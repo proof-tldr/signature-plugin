@@ -92,6 +92,7 @@ async def test_setup_from_files_and_documents_to_published_answers(
 
         reviewed = await called_through_page(client, 'review', opened_pages, {'decision': 'publish'})
         assert reviewed['state'] == 'published'
+        assert 'can now ask questions' in reviewed['note']
         assert plugin_environment.published_at is not None
 
         asked = await called(client, 'ask_question', {'question': 'What did each status bring in?'})
@@ -261,3 +262,15 @@ async def test_a_question_after_the_sources_change_shape_asks_for_a_rebuild(
 
     assert asked['state'] == 'stale'
     assert 'Call build' in asked['note']
+
+
+async def test_a_domain_that_cannot_get_ready_for_questions_is_said_to_be_published_but_not_ready(
+    plugin_environment: FakeSignature, opened_pages: list[str], data_files: Path
+) -> None:
+    plugin_environment.preparation_failure = 'the link of your Domain to the tables stayed invalid'
+    async with Client(server, raise_exceptions=True) as client:
+        await called(client, 'add_data_files', {'paths': [str(data_files)]})
+        await called(client, 'build', {'note': 'Amounts are cents.'})
+        reviewed = await called_through_page(client, 'review', opened_pages, {'decision': 'publish'})
+    assert reviewed['state'] == 'published'
+    assert 'could not get ready' in reviewed['note'] and 'stayed invalid' in reviewed['note']

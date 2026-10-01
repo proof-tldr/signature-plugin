@@ -15,14 +15,15 @@ id it chose: it reads the one domain the key opens from `GET /domains`.
 | `GET /domains/{id}` → `{name}` | exists |
 | `GET /domains/{id}/publication` → `{publishedAt}`, 404 while unpublished | exists |
 | `POST /domains/{id}/documents/presign` `{kind, filename, contentType, size, checksumSha256}` → `{url, contentRef}`, then `PUT url` | exists |
-| `PUT /domains/{id}/model/sources/{sourceId}/catalog` `{name, database}` | exists, but needs the one-catalog `duckdb` format below (#240) |
+| `PUT /domains/{id}/model/sources/{sourceId}/catalog` `{name, database}` | the one-catalog `duckdb` format below: PR #242 |
 | `POST /domains/{id}/conversation/turns` `{idempotencyKey, text?, sources?}` → `{turn: {id}}` | exists |
 | `GET /domains/{id}/conversation/turns/{turnId}` → `{state: pending\|answered\|failed, reply?}` | exists |
 | `GET /domains/{id}/conversation/clarifying-questions` → `{questions: [{id, question, suggestedAnswers}]}` | exists |
 | `POST /domains/{id}/conversation/clarifying-questions/{questionId}/answer` `{answer}` → `{turn: {id}}` | exists |
 | `POST /domains/{id}/publish` | exists; a domain key may call it (checked 2026-10-01) |
 | `GET /domains/{id}/model/snapshot` → the whole model, rendered as the review page; its `mappings`, `mappingFields` and `columns` also let the plugin pull real examples from the customer's data | exists |
-| `POST /domains/{id}/queries`, `GET /domains/{id}/queries/{queryId}` | **new** (#239) |
+| `GET /domains/{id}/query-package` → `{status: queued\|running\|failed\|succeeded, reason, fingerprint, …}`, 404 when the last publication needs none | PR #243 |
+| `POST /domains/{id}/queries`, `GET /domains/{id}/queries/{queryId}` | PR #244 |
 
 ## Documents
 
@@ -68,7 +69,14 @@ with `database: {adapter: "duckdb", catalog}`:
 - `nativeType` is DuckDB's type name, whatever the source's own type was.
 - No values from the data.
 
-## Queries (new, Signature-Platform #239)
+## Getting ready to answer (Signature-Platform PR #243)
+
+Publishing a domain with the plugin's catalog starts building its query package with signiture-sql in the
+background. After publishing, the review tool polls `GET /domains/{id}/query-package` until it is no longer
+`queued` or `running`, and tells Claude whether questions can be asked, or why not. A question asked earlier
+simply waits behind the build.
+
+## Queries (Signature-Platform #239, PR #244)
 
 The customer's data never leaves their machine, so Signature plans a query and the plugin runs it.
 

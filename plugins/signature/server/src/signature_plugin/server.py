@@ -21,6 +21,7 @@ from mcp_types import ElicitRequest, ElicitRequestURLParams, ElicitResult, Input
 from signature_plugin import handoff, presentation
 from signature_plugin.backend import (
     OpenQuestion,
+    Preparation,
     Signature,
     SignatureRefused,
     SignatureUnreachable,
@@ -359,7 +360,8 @@ async def review(ctx: Context[PluginState]) -> Reviewed | NotDecided | InputRequ
             return outcome
         if outcome.value.publish:
             await signature.publish()
-            return Reviewed(state='published', note='Published. The customer can now ask questions.', build=None)
+            await ctx.report_progress(0, message='Getting ready to answer questions about your data…')
+            return Reviewed(state='published', note=_readiness(await _prepared(signature)), build=None)
         build_id = await signature.start_build(outcome.value.changes, [])
         return Reviewed(
             state='changes_requested',
@@ -554,6 +556,30 @@ async def _numbered_questions(session: Session) -> list[QuestionView]:
     progress = session.progress.load()
     session.progress.save(progress.model_copy(update={'question_ids': {n: q.id for n, q in numbered.items()}}))
     return [_view(number, question) for number, question in numbered.items()]
+
+
+async def _prepared(signature: Signature) -> Preparation | None:
+    """Signature's preparation of the published domain, once it is no longer underway or the wait runs out."""
+    with anyio.move_on_after(WAIT_SECONDS):
+        while (found := await signature.preparation()) is not None and found.underway:
+            await anyio.sleep(POLL_SECONDS)
+        return found
+    return await signature.preparation()
+
+
+def _readiness(preparation: Preparation | None) -> str:
+    """What to tell Claude about asking questions once the domain is published."""
+    if preparation is None or preparation.state == 'succeeded':
+        return 'Published. The customer can now ask questions.'
+    if preparation.underway:
+        return (
+            'Published. Signature is still getting ready to answer questions; a question asked now waits for '
+            'it, so it may take a few minutes.'
+        )
+    return (
+        f'Published, but Signature could not get ready to answer questions: {preparation.reason}. Tell the '
+        'customer, and do not ask questions until it is fixed.'
+    )
 
 
 async def _waited[T](fetch: Callable[[], Awaitable[T]], pending: Callable[[T], bool]) -> T | None:
