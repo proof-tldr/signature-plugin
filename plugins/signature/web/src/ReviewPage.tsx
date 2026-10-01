@@ -45,13 +45,6 @@ export function ReviewPage({ domain, snapshot }: ReviewPageProps) {
         <p className="min-w-0 flex-1 truncate font-serif text-lg">{domain}</p>
         <button
           type="button"
-          onClick={() => setNote((current) => current ?? '')}
-          className="hidden rounded-md border border-line px-4 py-2 text-sm font-medium hover:border-ink/40 sm:block"
-        >
-          Something is wrong
-        </button>
-        <button
-          type="button"
           disabled={sending}
           onClick={() => decide('publish')}
           className="rounded-md bg-signature px-4 py-2 text-sm font-semibold text-signature-ink hover:brightness-110 disabled:opacity-60"

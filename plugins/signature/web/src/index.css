@@ -16,20 +16,6 @@
   --flag-wash: #fdecea;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --paper: #131821;
-    --ink: #e7eaf0;
-    --muted: #9aa4b4;
-    --line: #2a3240;
-    --canvas: #0e1219;
-    --signature: #86a4ff;
-    --signature-wash: #1c2645;
-    --signature-ink: #0d1530;
-    --flag: #f19a8b;
-    --flag-wash: #351c18;
-  }
-}
 
 @theme inline {
   --color-paper: var(--paper);
@@ -47,6 +33,9 @@
 }
 
 @layer base {
+  :root {
+    color-scheme: light;
+  }
   html,
   body,
   #root {

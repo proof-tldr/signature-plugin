@@ -96,7 +96,7 @@ function LaidOutMap({ review, selected, onSelect }: SourceMapProps) {
       edgesFocusable={false}
       onNodeClick={(_, node) => node.type === 'concept' && onSelect(node.id === selected ? null : node.id)}
       onPaneClick={() => onSelect(null)}
-      colorMode="system"
+      colorMode="light"
       minZoom={0.3}
       maxZoom={1.25}
       proOptions={{ hideAttribution: true }}
