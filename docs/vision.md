@@ -16,9 +16,11 @@ rebuilt from scratch around it, replacing the current remote-only version.
 - **A Claude Code plugin** bundles a local MCP server with skills that teach Claude how to
   set up a Signature domain.
 - **The local MCP server** runs on the customer's machine. Claude calls its tools.
-- **It calls the Signature-Platform REST API directly** (`openapi.json` is the contract). There
-  is no second MCP server on the backend. The existing remote `/mcp` endpoint in
-  Signature-Platform (`src/mcp/`) can stay for cloud-only use.
+- **It calls the Signature-Platform REST API directly** (`openapi.json` is the contract), with
+  the customer's API key, at the key API's address (`KeyApiUrl`): the same paths as the web
+  app, behind the API-key authorizer. There is no second MCP server on the backend. The
+  existing remote `/mcp` endpoint in Signature-Platform (`src/mcp/`) can stay for cloud-only
+  use.
 
 ## Intake: the customer's Claude is our intake agent
 
@@ -59,8 +61,8 @@ Claude sees a question in and an answer out, never the query.
 - **Read-only role, timeout and row limit** on every connection.
 - **A setting for what leaves the machine:** rows, aggregates only, or nothing.
 - Database credentials stay in a local config file and never leave the machine.
-- `packages/runtime` in Signature-Platform already answers questions against a local
-  `connections.json`. Check whether the server can wrap it before writing new execution code.
+- **`signiture-sql` runs the proven program locally**, translating it to SQL. It ships compiled
+  (Nuitka), so the customer installs nothing beyond the plugin and their API key.
 
 ## Local files: DuckDB
 
@@ -75,7 +77,9 @@ Claude sees a question in and an answer out, never the query.
 
 A customer can have many domains.
 
-- **Later, not now:** a domain-scoped API key, so one connection reaches only one domain.
+- **A domain-scoped API key**, so one connection reaches only one domain. This also lets us set
+  a domain up for a customer ahead of time and hand them its key: they start already underway.
+  A workspace key stays for building a domain from scratch.
 - **Writes land in a draft;** publishing stays a human action in the web app.
 - Writes carry the revision Claude last read; stale edits are rejected.
 - Confirm destructive calls with MCP elicitation and mark them `destructiveHint`.
@@ -83,7 +87,7 @@ A customer can have many domains.
 
 ## Defects in Signature-Platform's current `src/mcp`
 
-Found in review on 2026-09-30, not yet fixed:
+Found in review on 2026-09-30. 1 and 4 are fixed (Signature-Platform #230 and #228).
 
 1. **A thrown error contradicts the README.** `answerOf` throws when the answer isn't in its
    thread (`tools.ts`), giving a protocol error, not the readable tool error the README
@@ -97,9 +101,11 @@ Found in review on 2026-09-30, not yet fixed:
 5. **Only `GET` and `POST`.** `ApplicationRequest` allows only these, so the model-editing
    endpoints (`PATCH`, `DELETE`) are unreachable.
 
+## Decided
+
+- **Answers are shown only to the user.** Claude never reads them; a hook prints them.
+
 ## Open questions
 
-- The current plugin shows answers only to the user and blocks Claude from reading them.
-  Keep that?
 - Which language for the local server? DuckDB supports Python, which would let it reuse
   `packages/runtime`, and Node.
