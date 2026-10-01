@@ -47,7 +47,7 @@ ignore = ["ASYNC110"]
 quote-style = "single"
 
 [tool.pyright]
-include = ["src", "tests"]
+include = ["src", "tests", "evals"]
 typeCheckingMode = "strict"
 reportMissingTypeStubs = false
 reportUnknownMemberType = false

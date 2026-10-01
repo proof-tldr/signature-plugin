@@ -1,6 +1,7 @@
 """The pages the plugin shows the customer in their browser: one to connect a database, whose password never
 reaches Claude, and one to review the domain before it is published. They are served on 127.0.0.1 at an
-address holding a random token, so nothing else on the machine or the network can use them."""
+address holding a random token, so nothing else on the machine or the network can use them, and they answer only
+requests addressed to 127.0.0.1, so a website the browser has open cannot reach them by rebinding its own name."""
 
 import asyncio
 import secrets
@@ -53,7 +54,7 @@ class Pages:
     async def show[T](
         self, template: str, context: dict[str, Any], accept: Callable[[dict[str, str]], Awaitable[T | Refusal]]
     ) -> Page[T]:
-        """The page opened in the customer's browser."""
+        """A page waiting for the customer at its address; nothing is opened yet."""
         port = await self._started()
         page_id = secrets.token_urlsafe(8)
         page = Page(
@@ -64,11 +65,9 @@ class Pages:
             accept=accept,
         )
         self._pages[page_id] = page
-        webbrowser.open(page.address)
         return page
 
-    def reopen(self, page: Page[Any]) -> None:
-        """A page still waiting, brought up in the browser again."""
+    def open_in_browser(self, page: Page[Any]) -> None:
         webbrowser.open(page.address)
 
     def close(self, page: Page[Any]) -> None:
@@ -88,6 +87,8 @@ class Pages:
         return port
 
     async def _serve(self, request: Request) -> Response:
+        if request.headers.get('host') != f'127.0.0.1:{self._port}':
+            return HTMLResponse('Not found', status_code=404)
         page = self._pages.get(request.path_params['page_id'])
         if page is None or not secrets.compare_digest(request.path_params['token'], self._token):
             return _rendered('gone.html', status_code=404)

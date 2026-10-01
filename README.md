@@ -44,6 +44,7 @@ In `plugins/signature/server/src/signature_plugin/`:
 | `server.py` | The MCP tools, each one step of the flow |
 | `backend.py` | Signature's REST API, bound to the key's one domain |
 | `sources.py` | Which files and databases the customer added; passwords in the keychain |
+| `progress.py` | The build, conversation and question numbers the server remembers, so Claude never handles Signature's ids |
 | `local_data.py` | Opens every source in one locked, read-only DuckDB; reports structure; runs Signature's SQL |
 | `pages.py`, `templates/`, `review.py` | The local browser pages for connecting a database and reviewing the domain, the review drawn from Signature's model snapshot |
 | `handoff.py`, `show_answer.py`, `presentation.py` | Getting an answer to the customer without it reaching Claude |
@@ -61,6 +62,10 @@ uv run ruff check . && uv run ruff format --check . && uv run pyright
 
 `SIGNATURE_TEST_POSTGRES=host:port:database:user:password` (and `SIGNATURE_TEST_MYSQL`) runs the tests that
 connect a real database through the browser page.
+
+`uv run python evals/run.py` runs the evaluations: realistic customer requests through headless Claude Code
+against the stand-in, checked against what Claude should and should not do, with tool calls, errors, time and
+cost for each. They use model credits, so they are run by hand when tools or their descriptions change.
 
 To try the whole thing in Claude Code before Signature-Platform has every endpoint, run the stand-in and point
 the plugin at it:

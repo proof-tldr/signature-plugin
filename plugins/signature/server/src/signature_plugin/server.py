@@ -1,9 +1,13 @@
 """Signature's MCP server, run by Claude Code on the customer's machine. Its tools take a domain from sources
 and documents to published, and answer questions about it by running Signature's SQL here, on the customer's
-own data. Answers go to the customer; Claude only learns that they were shown."""
+own data. Answers go to the customer; Claude only learns that they were shown.
+
+Claude never handles Signature's ids: the server remembers the build it is waiting on and the conversation a
+follow-up continues, and numbers Signature's open questions."""
 
 import asyncio
 import functools
+import os
 import uuid
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import asynccontextmanager
@@ -13,6 +17,7 @@ from typing import Any, Literal, TypedDict
 import anyio
 from mcp.server.mcpserver import Context, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
+from mcp_types import ElicitRequest, ElicitRequestURLParams, ElicitResult, InputRequiredResult, ToolAnnotations
 
 from signature_plugin import handoff, local_data, presentation
 from signature_plugin.backend import (
@@ -24,12 +29,15 @@ from signature_plugin.backend import (
 )
 from signature_plugin.local_data import QueryRefused
 from signature_plugin.pages import Page, Pages, Refusal
+from signature_plugin.progress import ProgressStore
 from signature_plugin.review import review_of
 from signature_plugin.settings import NotConfigured, from_environment
 from signature_plugin.sources import DatabaseSource, FileSource, Source, SourceRefused, Sources
 
 POLL_SECONDS = 1.0
-WAIT_SECONDS = 540.0
+# How long one call waits on Signature or on the customer before handing back to Claude, under Claude Code's limit
+# on a single tool call. Evaluations shorten it.
+WAIT_SECONDS = float(os.environ.get('SIGNATURE_WAIT_SECONDS', '540'))
 
 INSTRUCTIONS = """Signature turns the customer's data and documents into a domain it can answer questions about
 with proven SQL. Your API key opens exactly one domain, so you never choose one.
@@ -40,10 +48,7 @@ review so they can publish. Pass documents as they are; do not go looking for mo
 
 Answers to questions are shown to the customer, never to you. Do not guess, restate or summarise them."""
 
-
-class Waiting(TypedDict):
-    state: Literal['waiting']
-    note: str
+type PagePurpose = Literal['connect', 'review']
 
 
 class SourceSummary(TypedDict):
@@ -53,14 +58,14 @@ class SourceSummary(TypedDict):
 
 
 class QuestionView(TypedDict):
-    question_id: str
+    number: int
     question: str
     suggested_answers: list[str]
 
 
 class Status(TypedDict):
     domain: str
-    published_at: str | None
+    published: bool
     sources: list[SourceSummary]
     open_questions: list[QuestionView]
 
@@ -73,16 +78,20 @@ class Added(TypedDict):
 
 class BuildProgress(TypedDict):
     state: Literal['built', 'questions', 'building', 'failed']
-    build_id: str
     reply: str | None
     open_questions: list[QuestionView]
     note: str
 
 
 class Answer(TypedDict):
-    question_id: str
+    question: int
     answer: str
     from_customer: bool
+
+
+class NotDecided(TypedDict):
+    state: Literal['waiting', 'declined']
+    note: str
 
 
 class Reviewed(TypedDict):
@@ -92,29 +101,34 @@ class Reviewed(TypedDict):
 
 
 class Asked(TypedDict):
-    query_id: str
-    thread_id: str
+    state: Literal['shown', 'unanswerable']
     note: str
 
 
 @dataclass
 class PluginState:
     pages: Pages
-    waiting_pages: dict[Literal['connect', 'review'], Page[Any]]
+    waiting_pages: dict[PagePurpose, Page[Any]]
 
 
 @dataclass(frozen=True)
 class Session:
-    """Signature, bound to the key's one domain, and the sources this machine holds for that domain."""
+    """Signature, bound to the key's one domain, and what this machine holds for that domain."""
 
     signature: Signature
     sources: Sources
+    progress: ProgressStore
 
 
 @dataclass(frozen=True)
 class ReviewDecision:
     publish: bool
     changes: str
+
+
+@dataclass(frozen=True)
+class Decided[T]:
+    value: T
 
 
 @asynccontextmanager
@@ -146,12 +160,15 @@ def _tool_errors[**P, T](tool: Callable[P, Awaitable[T]]) -> Callable[P, Awaitab
 async def _session() -> AsyncGenerator[Session]:
     settings = from_environment()
     async with connected(settings) as signature:
-        yield Session(signature=signature, sources=Sources(settings.data_dir / signature.domain_id))
+        folder = settings.data_dir / signature.domain_id
+        yield Session(signature=signature, sources=Sources(folder), progress=ProgressStore(folder))
 
 
 @server.tool(
+    title='Signature status',
     description="Where the customer's Signature domain stands: its name, whether it is published, "
-    'the sources added so far, and the questions Signature is waiting on.'
+    'the sources added so far, and the questions Signature is waiting on.',
+    annotations=ToolAnnotations(read_only_hint=True, idempotent_hint=True, open_world_hint=True),
 )
 @_tool_errors
 async def get_status() -> Status:
@@ -159,16 +176,21 @@ async def get_status() -> Status:
         domain = await session.signature.domain()
         return Status(
             domain=domain.name,
-            published_at=domain.published_at,
+            published=domain.published_at is not None,
             sources=[_summary(source) for source in session.sources.all()],
-            open_questions=_views(await session.signature.open_questions()),
+            open_questions=await _numbered_questions(session),
         )
 
 
 @server.tool(
+    title='Add data files',
     description="Adds the customer's data files as sources: CSV, TSV, XLSX, Parquet or JSON files, or "
-    'folders of them. Give absolute paths. The files stay on this machine; Signature is told '
-    'their structure and a few example values when you build.'
+    'folders of them, by absolute path, for example ["/Users/ana/exports/orders.csv", "/Users/ana/exports"]. '
+    'The files stay on this machine; Signature is told their structure and a few example values when you '
+    'build. Adding a file again does nothing.',
+    annotations=ToolAnnotations(
+        read_only_hint=False, destructive_hint=False, idempotent_hint=True, open_world_hint=False
+    ),
 )
 @_tool_errors
 async def add_data_files(paths: list[str]) -> list[Added]:
@@ -183,30 +205,42 @@ async def add_data_files(paths: list[str]) -> list[Added]:
 
 
 @server.tool(
-    description="Opens a page in the customer's browser where they connect a PostgreSQL or MySQL "
-    'database themselves, so its password never passes through you. Waits until they have '
-    'connected it. Call once per database.'
+    title='Connect a database',
+    description='Asks the customer to connect a PostgreSQL or MySQL database on a page in their browser, so '
+    'its password never passes through you. Waits until they have connected it. Call once per database.',
+    annotations=ToolAnnotations(
+        read_only_hint=False, destructive_hint=False, idempotent_hint=False, open_world_hint=False
+    ),
 )
 @_tool_errors
-async def connect_database(ctx: Context[PluginState], suggested_name: str | None = None) -> Added | Waiting:
+async def connect_database(
+    ctx: Context[PluginState], suggested_name: str | None = None
+) -> Added | NotDecided | InputRequiredResult:
     async with _session() as session:
         sources = session.sources
 
     async def connected_from(form: dict[str, str]) -> DatabaseSource | Refusal:
         return await _database_connected(sources, form)
 
-    source = await _decision_on_page(
+    outcome = await _decision_on_page(
         ctx,
         'connect',
         lambda pages: pages.show('connect.html', {'suggested_name': suggested_name}, connected_from),
-        'Waiting for the customer to connect their database…',
+        'Connect your database to Signature. The password stays on this computer.',
     )
-    if source is None:
-        return Waiting(state='waiting', note='The page is still open. Call connect_database again to keep waiting.')
-    return await _checked(source)
+    if not isinstance(outcome, Decided):
+        return outcome
+    return await _checked(outcome.value)
 
 
-@server.tool(description='Removes a source the customer no longer wants Signature to use.')
+@server.tool(
+    title='Remove a source',
+    description='Removes a source, by the name add_data_files, connect_database or get_status gave it. '
+    'Build again for Signature to drop it.',
+    annotations=ToolAnnotations(
+        read_only_hint=False, destructive_hint=True, idempotent_hint=True, open_world_hint=False
+    ),
+)
 @_tool_errors
 async def remove_source(name: str) -> str:
     async with _session() as session:
@@ -215,10 +249,13 @@ async def remove_source(name: str) -> str:
 
 
 @server.tool(
-    description='Builds the domain: tells Signature the structure of every source added so far and '
-    'hands it the documents at the given absolute paths, exactly as they are. `note` is '
-    'anything the customer said that Signature should know. Waits while Signature builds and '
-    'returns its reply and any questions it has.'
+    title='Build the domain',
+    description='Builds the domain: tells Signature the structure of every source added so far and hands it '
+    'the documents at the given absolute paths, exactly as they are. `note` is anything the customer said that '
+    'Signature should know. Waits while Signature builds and returns its reply and any questions it has.',
+    annotations=ToolAnnotations(
+        read_only_hint=False, destructive_hint=False, idempotent_hint=False, open_world_hint=True
+    ),
 )
 @_tool_errors
 async def build(
@@ -227,7 +264,10 @@ async def build(
     async with _session() as session:
         signature, sources = session.signature, session.sources.all()
         if not sources and not documents:
-            raise ToolError("There is nothing to build from yet: add the customer's data or documents first.")
+            raise ToolError(
+                "There is nothing to build from yet. Add the customer's data with add_data_files or "
+                'connect_database, or pass their documents.'
+            )
         contents = [await _document(path) for path in documents or []]
         await ctx.report_progress(0, message='Telling Signature about your data…')
         catalogs = await anyio.to_thread.run_sync(local_data.catalogs, sources)
@@ -236,39 +276,65 @@ async def build(
         await ctx.report_progress(0, message='Uploading your documents…')
         staged = [await signature.stage_document(name, content) for name, content in contents]
         build_id = await signature.start_build(note, staged)
-        return await _followed(signature, build_id, ctx)
+        return await _followed(session, build_id, ctx)
 
 
 @server.tool(
-    description="Answers Signature's open questions. Set from_customer to false for an answer you "
-    'worked out yourself rather than heard from the customer, so Signature knows to treat it '
-    'as unconfirmed. Waits while Signature continues building.'
+    title="Answer Signature's questions",
+    description="Answers Signature's open questions, by their numbers. Set from_customer to false for an "
+    'answer you worked out yourself rather than heard from the customer, so Signature treats it as '
+    'unconfirmed. Waits while Signature continues building.',
+    annotations=ToolAnnotations(
+        read_only_hint=False, destructive_hint=False, idempotent_hint=False, open_world_hint=True
+    ),
 )
 @_tool_errors
 async def answer_questions(answers: list[Answer], ctx: Context[PluginState]) -> BuildProgress:
     if not answers:
-        raise ToolError('Give at least one answer.')
+        raise ToolError(
+            'Give at least one answer, for example [{"question": 1, "answer": "…", "from_customer": true}].'
+        )
     async with _session() as session:
+        question_ids = session.progress.load().question_ids
+        unknown = [given['question'] for given in answers if given['question'] not in question_ids]
+        if unknown:
+            open_numbers = ', '.join(str(number) for number in question_ids) or 'none'
+            raise ToolError(
+                f'There is no open question {", ".join(map(str, unknown))}. Open questions: {open_numbers}. '
+                'Call get_status to see them.'
+            )
         build_ids = [
-            await session.signature.answer_question(given['question_id'], _attributed(given)) for given in answers
+            await session.signature.answer_question(question_ids[given['question']], _attributed(given))
+            for given in answers
         ]
-        return await _followed(session.signature, build_ids[-1], ctx)
-
-
-@server.tool(description='Keeps waiting on a build that was still going when the last call returned.')
-@_tool_errors
-async def wait_for_build(build_id: str, ctx: Context[PluginState]) -> BuildProgress:
-    async with _session() as session:
-        return await _followed(session.signature, build_id, ctx)
+        return await _followed(session, build_ids[-1], ctx)
 
 
 @server.tool(
-    description="Opens the review page in the customer's browser: the domain in plain terms, with a "
-    'button to publish it or a box to say what is wrong. Waits for their decision. Publishing '
-    'happens there; a requested change is sent to Signature and rebuilt.'
+    title='Wait for the build',
+    description='Keeps waiting on the build that was still going when the last call returned.',
+    annotations=ToolAnnotations(read_only_hint=True, idempotent_hint=True, open_world_hint=True),
 )
 @_tool_errors
-async def review(ctx: Context[PluginState]) -> Reviewed | Waiting:
+async def wait_for_build(ctx: Context[PluginState]) -> BuildProgress:
+    async with _session() as session:
+        build_id = session.progress.load().build_id
+        if build_id is None:
+            raise ToolError('No build has been started. Call build first.')
+        return await _followed(session, build_id, ctx)
+
+
+@server.tool(
+    title='Review and publish',
+    description='Shows the customer the domain in plain terms on a page in their browser, with a button to '
+    'publish it or a box to say what is wrong. Waits for their decision. A requested change is sent to '
+    'Signature and rebuilt.',
+    annotations=ToolAnnotations(
+        read_only_hint=False, destructive_hint=False, idempotent_hint=False, open_world_hint=True
+    ),
+)
+@_tool_errors
+async def review(ctx: Context[PluginState]) -> Reviewed | NotDecided | InputRequiredResult:
     async with _session() as session:
         signature = session.signature
 
@@ -277,51 +343,56 @@ async def review(ctx: Context[PluginState]) -> Reviewed | Waiting:
             context = {'domain_name': domain.name, 'review': review_of(await signature.model_snapshot())}
             return await pages.show('review.html', context, _review_decision)
 
-        decision = await _decision_on_page(ctx, 'review', review_page, 'Waiting for the customer to review…')
-        if decision is None:
-            return Waiting(state='waiting', note='The review is still open. Call review again to keep waiting.')
-        if decision.publish:
+        outcome = await _decision_on_page(
+            ctx, 'review', review_page, 'Review what Signature understood, then publish it or say what is wrong.'
+        )
+        if not isinstance(outcome, Decided):
+            return outcome
+        if outcome.value.publish:
             await signature.publish()
             return Reviewed(state='published', note='Published. The customer can now ask questions.', build=None)
-        build_id = await signature.start_build(decision.changes, [])
+        build_id = await signature.start_build(outcome.value.changes, [])
         return Reviewed(
             state='changes_requested',
-            note='The customer asked for changes, which were sent to Signature. Open the review again once the '
+            note='The customer asked for changes, which were sent to Signature. Call review again once the '
             'build has no open questions.',
-            build=await _followed(signature, build_id, ctx),
+            build=await _followed(session, build_id, ctx),
         )
 
 
 @server.tool(
-    description="Asks Signature a question about the customer's published domain. Signature writes the "
-    "SQL; it runs here on the customer's data, and the answer is shown to the customer, not to "
-    'you. Pass the thread_id from an earlier answer for a follow-up.'
+    title='Ask Signature',
+    description="Asks Signature a question about the customer's published domain. Signature writes the SQL; it "
+    "runs here on the customer's data, and the answer is shown to the customer, not to you. Set follow_up to "
+    'true to continue from the previous question.',
+    annotations=ToolAnnotations(read_only_hint=True, idempotent_hint=True, open_world_hint=True),
 )
 @_tool_errors
-async def ask_question(question: str, ctx: Context[PluginState], thread_id: str | None = None) -> Asked:
+async def ask_question(question: str, ctx: Context[PluginState], follow_up: bool = False) -> Asked:
     async with _session() as session:
-        signature = session.signature
-        query_id = await signature.plan_query(question, thread_id)
+        signature, progress = session.signature, session.progress.load()
+        if follow_up and progress.thread_id is None:
+            raise ToolError('There is no earlier question to follow up on. Ask it with follow_up false.')
+        query_id = await signature.plan_query(question, progress.thread_id if follow_up else None)
         await ctx.report_progress(0, message='Signature is working out the query…')
         plan = await _waited(lambda: signature.query(query_id), lambda found: found.state == 'pending')
         if plan is None:
             raise ToolError('Signature took too long to work out the query. Ask again.')
+        session.progress.save(progress.model_copy(update={'thread_id': plan.thread_id}))
         match plan.state:
             case 'planned' if plan.sql:
                 await ctx.report_progress(0, message='Running it on your data…')
                 result = await anyio.to_thread.run_sync(local_data.run, session.sources.all(), plan.sql)
-                handoff.leave(query_id, presentation.answer_text(plan.reading, result))
-                told = 'The answer was shown to the customer.'
+                handoff.leave(question, presentation.answer_text(plan.reading, result))
+                return Asked(state='shown', note='The answer was shown to the customer. You cannot see it.')
             case 'unanswerable':
-                handoff.leave(query_id, f"Signature can't answer this from your domain: {plan.reason}")
-                told = 'Signature could not answer this from the domain, and the customer was told why.'
+                handoff.leave(question, f"Signature can't answer this from your domain: {plan.reason}")
+                return Asked(
+                    state='unanswerable',
+                    note='Signature could not answer this from the domain, and the customer was told why.',
+                )
             case _:
                 raise ToolError('Signature could not work out a query for this question.')
-        return Asked(
-            query_id=query_id,
-            thread_id=plan.thread_id,
-            note=f'{told} You cannot see it. For a follow-up, pass this thread_id.',
-        )
 
 
 async def _document(location: str) -> tuple[str, bytes]:
@@ -330,7 +401,7 @@ async def _document(location: str) -> tuple[str, bytes]:
     try:
         return path.name, await path.read_bytes()
     except OSError as failure:
-        raise ToolError(f'Could not read {location}: {failure.strerror}.') from failure
+        raise ToolError(f'Could not read {location}: {failure.strerror}. Give an absolute path.') from failure
 
 
 async def _checked(source: Source) -> Added:
@@ -344,7 +415,7 @@ async def _database_connected(sources: Sources, form: dict[str, str]) -> Databas
     try:
         port = int(form.get('port') or (3306 if engine == 'mysql' else 5432))
     except ValueError:
-        return Refusal('The port must be a number.')
+        return Refusal('The port must be a number, such as 5432.')
     source = sources.add_database(
         DatabaseSource(
             name=form.get('name') or engine,
@@ -373,66 +444,96 @@ async def _review_decision(form: dict[str, str]) -> ReviewDecision | Refusal:
 
 async def _decision_on_page[T](
     ctx: Context[PluginState],
-    purpose: Literal['connect', 'review'],
+    purpose: PagePurpose,
     opened: Callable[[Pages], Awaitable[Page[T]]],
-    waiting_message: str,
-) -> T | None:
-    """The customer's decision on the page for that purpose: the one still waiting from an earlier call,
-    brought up again, or a new one. None if they have not decided within the wait; the page stays open."""
+    invitation: str,
+) -> Decided[T] | NotDecided | InputRequiredResult:
+    """The customer's decision on the page for that purpose: the one still waiting from an earlier call, or a new
+    one. A client that can show the customer a link is asked to, in a first round; otherwise, or if the customer
+    dismissed the link, the page opens in their browser directly."""
     state = ctx.request_context.lifespan_context
     page: Page[T] | None = state.waiting_pages.get(purpose)
     if page is None:
         page = await opened(state.pages)
         state.waiting_pages[purpose] = page
-    else:
-        state.pages.reopen(page)
-    await ctx.report_progress(0, message=waiting_message)
+    response = (ctx.input_responses or {}).get(purpose)
+    if response is None and _shows_links(ctx):
+        link = ElicitRequestURLParams(message=invitation, url=page.address, elicitation_id=page.id)
+        return InputRequiredResult(input_requests={purpose: ElicitRequest(params=link)}, request_state=purpose)
+    action = response.action if isinstance(response, ElicitResult) else None
+    if action == 'decline':
+        _forget(state, purpose, page)
+        return NotDecided(state='declined', note='The customer chose not to open the page.')
+    if action != 'accept':
+        state.pages.open_in_browser(page)
+    await ctx.report_progress(0, message='Waiting for the customer on the page in their browser…')
     try:
         decision = await asyncio.wait_for(asyncio.shield(page.decided), WAIT_SECONDS)
     except TimeoutError:
-        return None
+        return NotDecided(
+            state='waiting',
+            note="The page is still open in the customer's browser and nobody has used it yet. Tell the customer it "
+            'is waiting for them and stop; call this tool again only after they say they are done with it.',
+        )
+    _forget(state, purpose, page)
+    return Decided(decision)
+
+
+def _shows_links(ctx: Context[PluginState]) -> bool:
+    capabilities = ctx.client_capabilities
+    return (
+        capabilities is not None and capabilities.elicitation is not None and capabilities.elicitation.url is not None
+    )
+
+
+def _forget(state: PluginState, purpose: PagePurpose, page: Page[Any]) -> None:
     del state.waiting_pages[purpose]
     state.pages.close(page)
-    return decision
 
 
-async def _followed(signature: Signature, build_id: str, ctx: Context[PluginState]) -> BuildProgress:
+async def _followed(session: Session, build_id: str, ctx: Context[PluginState]) -> BuildProgress:
     """The build followed until it ends, or until the wait runs out, with what Claude should do next."""
+    session.progress.save(session.progress.load().model_copy(update={'build_id': build_id}))
     await ctx.report_progress(0, message='Signature is building your domain…')
-    status = await _waited(lambda: signature.build_status(build_id), lambda found: found.state == 'pending')
+    status = await _waited(lambda: session.signature.build_status(build_id), lambda found: found.state == 'pending')
     if status is None:
         return BuildProgress(
             state='building',
-            build_id=build_id,
             reply=None,
             open_questions=[],
-            note='Signature is still building. Call wait_for_build with this build_id.',
+            note='Signature is still building. Call wait_for_build.',
         )
     if status.state == 'failed':
         return BuildProgress(
             state='failed',
-            build_id=build_id,
             reply=None,
             open_questions=[],
             note='Signature could not finish this build. Try again, or hand it less at once.',
         )
-    questions = _views(await signature.open_questions())
+    questions = await _numbered_questions(session)
     if questions:
         return BuildProgress(
             state='questions',
-            build_id=build_id,
             reply=status.reply,
             open_questions=questions,
-            note='Answer what you can from what the customer told you or gave you; ask the '
-            'customer the rest together, then call answer_questions.',
+            note='Answer what you can from what the customer told you or gave you; ask the customer the rest '
+            'together, then call answer_questions with the question numbers.',
         )
     return BuildProgress(
         state='built',
-        build_id=build_id,
         reply=status.reply,
         open_questions=[],
         note='Nothing is open. Tell the customer what Signature did, then call review.',
     )
+
+
+async def _numbered_questions(session: Session) -> list[QuestionView]:
+    """Signature's open questions, numbered from 1; the numbers are remembered for answer_questions."""
+    questions = await session.signature.open_questions()
+    numbered = dict(enumerate(questions, start=1))
+    progress = session.progress.load()
+    session.progress.save(progress.model_copy(update={'question_ids': {n: q.id for n, q in numbered.items()}}))
+    return [_view(number, question) for number, question in numbered.items()]
 
 
 async def _waited[T](fetch: Callable[[], Awaitable[T]], pending: Callable[[T], bool]) -> T | None:
@@ -464,11 +565,8 @@ def _summary(source: Source) -> SourceSummary:
     )
 
 
-def _views(questions: list[OpenQuestion]) -> list[QuestionView]:
-    return [
-        QuestionView(question_id=question.id, question=question.question, suggested_answers=question.suggested_answers)
-        for question in questions
-    ]
+def _view(number: int, question: OpenQuestion) -> QuestionView:
+    return QuestionView(number=number, question=question.question, suggested_answers=question.suggested_answers)
 
 
 def main() -> None:

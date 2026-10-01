@@ -46,6 +46,10 @@ yours to work out.
 - No check-in page before the build: the customer picks the documents themselves (2026-10-01).
 - Signature sends ready SQL for one DuckDB on the customer's machine, which opens their files and attaches
   their PostgreSQL and MySQL databases; nothing else runs their queries (2026-10-01).
+- Pages open through MCP's URL elicitation, which Claude Code supports; the server opens the browser itself only
+  when the client cannot show a link or the prompt was dismissed (2026-10-01).
+- No MCP tasks for long waits: Claude Code does not advertise the tasks capability (checked 2026-10-01), so a
+  call waits up to nine minutes and then hands back with `wait_for_build`. Revisit when it does.
 - The backend endpoints the plugin needs are stubbed by a stand-in until they exist; see
   [backend-contract.md](backend-contract.md).
 

@@ -10,6 +10,8 @@ import anyio
 import httpx2
 import pytest
 from mcp import Client
+from mcp.client.session import ClientRequestContext
+from mcp_types import ElicitRequestParams, ElicitRequestURLParams, ElicitResult
 
 from signature_plugin import show_answer
 from signature_plugin.fake_backend import FakeSignature
@@ -79,7 +81,7 @@ async def test_setup_from_files_and_documents_to_published_answers(
             {
                 'answers': [
                     {
-                        'question_id': question['question_id'],
+                        'question': question['number'],
                         'answer': 'The refund policy is right.',
                         'from_customer': True,
                     },
@@ -96,7 +98,8 @@ async def test_setup_from_files_and_documents_to_published_answers(
         assert 'cannot see it' in asked['note']
         assert 'paid' not in json.dumps(asked)
 
-    monkeypatch.setattr('sys.stdin', io.StringIO(json.dumps({'tool_response': json.dumps(asked)})))
+    hook_input = {'tool_input': {'question': 'What did each status bring in?'}, 'tool_response': json.dumps(asked)}
+    monkeypatch.setattr('sys.stdin', io.StringIO(json.dumps(hook_input)))
     shown = io.StringIO()
     monkeypatch.setattr('sys.stdout', shown)
     show_answer.main()
@@ -185,3 +188,58 @@ async def test_a_database_connected_in_the_browser_is_reported(
         await called(client, 'build')
     tables = plugin_environment.catalogs['sales_db']['tables']
     assert expected_table in {table['sqlName'] for table in tables}
+
+
+async def test_a_client_that_shows_links_is_asked_to_open_the_review(
+    plugin_environment: FakeSignature, opened_pages: list[str], data_files: Path
+) -> None:
+    links: list[str] = []
+
+    async def accept(context: ClientRequestContext, params: ElicitRequestParams) -> ElicitResult:
+        assert isinstance(params, ElicitRequestURLParams)
+        links.append(params.url)
+        return ElicitResult(action='accept')
+
+    async with Client(server, raise_exceptions=True, elicitation_callback=accept) as client:
+        await called(client, 'add_data_files', {'paths': [str(data_files / 'orders.csv')]})
+        await called(client, 'build')
+        reviewed = await called_through_page(client, 'review', links, {'decision': 'publish'})
+    assert reviewed['state'] == 'published'
+    assert opened_pages == []
+
+
+async def test_a_declined_link_is_reported_not_opened(
+    plugin_environment: FakeSignature, opened_pages: list[str], data_files: Path
+) -> None:
+    async def decline(context: ClientRequestContext, params: ElicitRequestParams) -> ElicitResult:
+        return ElicitResult(action='decline')
+
+    async with Client(server, raise_exceptions=True, elicitation_callback=decline) as client:
+        await called(client, 'add_data_files', {'paths': [str(data_files / 'orders.csv')]})
+        await called(client, 'build')
+        reviewed = await called(client, 'review')
+    assert reviewed['state'] == 'declined'
+    assert opened_pages == []
+
+
+@pytest.mark.parametrize(
+    ('tool', 'arguments', 'told'),
+    [
+        (
+            'answer_questions',
+            {'answers': [{'question': 9, 'answer': 'x', 'from_customer': True}]},
+            'no open question 9',
+        ),
+        ('wait_for_build', {}, 'Call build first'),
+        ('ask_question', {'question': 'And last year?', 'follow_up': True}, 'no earlier question'),
+        ('add_data_files', {'paths': ['/nowhere/orders.csv']}, 'does not exist'),
+        ('remove_source', {'name': 'sales'}, 'no source called sales'),
+    ],
+)
+async def test_a_mistake_is_told_with_what_to_do(
+    plugin_environment: FakeSignature, tool: str, arguments: dict[str, Any], told: str
+) -> None:
+    async with Client(server) as client:
+        result = await client.call_tool(tool, arguments)
+    assert result.is_error
+    assert told in str(result.content)

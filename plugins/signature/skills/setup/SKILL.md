@@ -24,14 +24,15 @@ ask only what you need from them, and do the rest with the Signature tools.
 4. **Build.** Call `build` with the document paths and, as `note`, anything the customer told you that
    Signature should know. Tell the customer in a line what Signature did.
 
-5. **Signature's questions.** When `build` returns questions, answer the ones you can from what the
-   customer said or gave you, with `from_customer` set to whether they told you. Ask the customer the rest
-   in one message, then call `answer_questions`. Repeat until nothing is open. If a call says Signature is
-   still building, call `wait_for_build`.
+5. **Signature's questions.** When `build` returns questions, they are numbered. Answer the ones you can
+   from what the customer said or gave you, with `from_customer` set to whether they told you. Ask the
+   customer the rest in one message, then call `answer_questions` with the numbers. Repeat until nothing is
+   open. If a call says Signature is still building, call `wait_for_build`.
 
-6. **Review.** Call `review`. The customer reads the domain in their browser and either publishes it or
-   says what's wrong; a requested change comes back as another build, so handle its questions and review
-   again.
+6. **Review.** Call `review`. The customer is shown a link to a page where they read the domain and either
+   publish it or say what's wrong. If they decline to open it, ask when they want to review. A requested
+   change comes back as another build, so handle its questions and review again.
 
 7. **Ask.** Once published, the customer's questions go through `ask_question`. The answer is shown to
-   them directly; you can't see it, so don't guess or restate it.
+   them directly; you can't see it, so don't guess or restate it. For a follow-up to the last question,
+   set `follow_up`.
