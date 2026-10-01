@@ -48,6 +48,7 @@ In `plugins/signature/server/src/signature_plugin/`:
 | `progress.py` | The build, conversation and question numbers the server remembers, so Claude never handles Signature's ids |
 | `local_data.py` | Opens every source in one locked, read-only DuckDB; reports structure; runs Signature's SQL |
 | `pages.py`, `web/` | Serves the built web app on 127.0.0.1, with each page's data and the customer's decision as JSON |
+| `examples.py` | Real records and pairs from the customer's data, found locally, shown beside each item on the review page |
 | `handoff.py`, `show_answer.py`, `presentation.py` | Getting an answer to the customer without it reaching Claude |
 | `fake_backend.py` | A stand-in Signature implementing the contract, for development and rehearsal |
 

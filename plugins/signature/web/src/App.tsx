@@ -13,7 +13,9 @@ export function App() {
 
   if (page === null) return null
   if ('failed' in page) return <Notice title="This page has expired" body={page.failed} />
-  return page.page === 'review' ? <ReviewPage domain={page.domain} snapshot={page.snapshot} /> : <ConnectPage suggestedName={page.suggestedName} />
+  return page.page === 'review' ? (
+    <ReviewPage domain={page.domain} snapshot={page.snapshot} examples={page.examples} />
+  ) : <ConnectPage suggestedName={page.suggestedName} />
 }
 
 export function Notice({ title, body }: { title: string; body: string }) {

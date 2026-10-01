@@ -33,7 +33,8 @@ class FakeSignature:
     domain_name: str = 'Demo domain'
     published_at: str | None = None
     documents: dict[str, str] = field(default_factory=dict[str, str])
-    catalogs: dict[str, dict[str, Any]] = field(default_factory=dict[str, dict[str, Any]])
+    # Each reported source's name and catalog, by the id it was reported under.
+    catalogs: dict[str, tuple[str, dict[str, Any]]] = field(default_factory=dict[str, tuple[str, dict[str, Any]]])
     turns: dict[str, dict[str, Any]] = field(default_factory=dict[str, dict[str, Any]])
     questions: dict[str, dict[str, Any]] = field(default_factory=dict[str, dict[str, Any]])
     queries: dict[str, dict[str, Any]] = field(default_factory=dict[str, dict[str, Any]])
@@ -89,7 +90,7 @@ class FakeSignature:
 
     async def report_catalog(self, request: Request) -> Response:
         body = await request.json()
-        self.catalogs[body['name']] = body['database']['catalog']
+        self.catalogs[request.path_params['source_id']] = (body['name'], body['database']['catalog'])
         return JSONResponse({'sourceId': request.path_params['source_id']})
 
     async def start_turn(self, request: Request) -> Response:
@@ -123,44 +124,51 @@ class FakeSignature:
         return JSONResponse({'turn': self._turn(f'Noted: {answer}')}, status_code=202)
 
     async def model_snapshot(self, _request: Request) -> Response:
-        """A model with one entity per reported table and one field per column, mapped from that table."""
-        entities: list[dict[str, Any]] = []
-        fields: list[dict[str, Any]] = []
-        tables: list[dict[str, Any]] = []
-        mappings: list[dict[str, Any]] = []
-        for source, catalog in self.catalogs.items():
+        """A model with one entity per reported table, one field per column, each read from that column, and each
+        record identified by its primary key or else its first column."""
+        model: dict[str, list[dict[str, Any]]] = {
+            key: []
+            for key in ('entities', 'fields', 'sources', 'databaseEntities', 'columns', 'mappings', 'mappingFields')
+        }
+        for source_id, (source, catalog) in self.catalogs.items():
+            model['sources'].append({'id': source_id, 'kind': 'duckdb', 'connection': source})
             for table in catalog['tables']:
-                entity_id, table_id = str(uuid.uuid4()), str(uuid.uuid4())
-                entities.append(
-                    {
-                        'id': entity_id,
-                        'name': table['name'].title(),
-                        'invariants': [],
-                        'doc': f'Read from {source} (stand-in backend).',
-                    }
+                entity_id, table_id, mapping_id = str(uuid.uuid4()), str(uuid.uuid4()), str(uuid.uuid4())
+                model['entities'].append({'id': entity_id, 'name': table['name'].title(), 'invariants': []})
+                model['databaseEntities'].append({'id': table_id, 'sourceId': source_id, 'relation': table['name']})
+                identity: list[dict[str, str]] = []
+                for column in table['columns']:
+                    field_id, column_id = str(uuid.uuid4()), str(uuid.uuid4())
+                    model['fields'].append(
+                        {
+                            'id': field_id,
+                            'entityId': entity_id,
+                            'name': column['name'],
+                            'type': {'kind': 'named', 'name': column['type'].lower()},
+                        }
+                    )
+                    model['columns'].append(
+                        {
+                            'id': column_id,
+                            'databaseEntityId': table_id,
+                            'name': column['name'],
+                            'storage': {'kind': 'column', 'column': column['name']},
+                        }
+                    )
+                    model['mappingFields'].append(
+                        {
+                            'id': str(uuid.uuid4()),
+                            'mappingId': mapping_id,
+                            'columnId': column_id,
+                            'target': {'kind': 'field', 'fieldId': field_id},
+                        }
+                    )
+                    if column['primaryKey'] or not identity:
+                        identity = [{'columnId': column_id, 'name': column['name']}]
+                model['mappings'].append(
+                    {'id': mapping_id, 'entityId': entity_id, 'databaseEntityId': table_id, 'identity': identity}
                 )
-                fields += [
-                    {
-                        'id': str(uuid.uuid4()),
-                        'entityId': entity_id,
-                        'name': column['name'],
-                        'type': {'kind': 'named', 'name': column['type'].lower()},
-                    }
-                    for column in table['columns']
-                ]
-                tables.append({'id': table_id, 'sourceId': source, 'relation': table['sqlName']})
-                mappings.append({'id': str(uuid.uuid4()), 'entityId': entity_id, 'databaseEntityId': table_id})
-        return JSONResponse(
-            {
-                'entities': entities,
-                'fields': fields,
-                'functions': [],
-                'axioms': [],
-                'sources': [{'id': name} for name in self.catalogs],
-                'databaseEntities': tables,
-                'mappings': mappings,
-            }
-        )
+        return JSONResponse(model | {'functions': [], 'axioms': []})
 
     async def publish(self, _request: Request) -> Response:
         self.published_at = datetime.now(UTC).isoformat()
@@ -170,7 +178,7 @@ class FakeSignature:
         body = await request.json()
         query_id = str(uuid.uuid4())
         canned = self.canned_queries.get(body['question'])
-        first_table = next((t['sqlName'] for c in self.catalogs.values() for t in c['tables']), None)
+        first_table = next((t['sqlName'] for _, c in self.catalogs.values() for t in c['tables']), None)
         if canned:
             plan = {'state': 'planned', 'reading': canned['reading'], 'sql': canned['sql']}
         elif first_table:
@@ -187,6 +195,12 @@ class FakeSignature:
     async def get_query(self, request: Request) -> Response:
         query = self.queries.get(request.path_params['query_id'])
         return JSONResponse(query) if query else _problem(404, 'Unknown query')
+
+    def catalog_named(self, name: str) -> dict[str, Any]:
+        return next(catalog for source, catalog in self.catalogs.values() if source == name)
+
+    def source_names(self) -> set[str]:
+        return {source for source, _ in self.catalogs.values()}
 
     def _turn(self, reply: str) -> dict[str, Any]:
         turn_id = str(uuid.uuid4())

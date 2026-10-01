@@ -72,7 +72,7 @@ async def test_setup_from_files_and_documents_to_published_answers(
         assert built['state'] == 'questions'
         [question] = built['open_questions']
         assert 'define the same term differently' in question['question']
-        assert set(plugin_environment.catalogs) == {'orders', 'customers', 'products'}
+        assert plugin_environment.source_names() == {'orders', 'customers', 'products'}
         assert sorted(plugin_environment.documents.values()) == ['glossary.md', 'refund-policy.md']
 
         answered = await called(
@@ -186,7 +186,7 @@ async def test_a_database_connected_in_the_browser_is_reported(
         assert connected['source'] == 'sales_db'
         assert password not in json.dumps(await called(client, 'get_status'))
         await called(client, 'build')
-    tables = plugin_environment.catalogs['sales_db']['tables']
+    tables = plugin_environment.catalog_named('sales_db')['tables']
     assert expected_table in {table['sqlName'] for table in tables}
 
 

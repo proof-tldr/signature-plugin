@@ -24,7 +24,7 @@ export function samplePage(query: URLSearchParams): PageData {
         { id: 'f4', entityId: 'o', name: 'placed on', type: { kind: 'named', name: 'date' } },
         { id: 'f5', entityId: 'o', name: 'status', type: { kind: 'named', name: 'text' },
           doc: 'Pending, paid, refunded or cancelled.' },
-        { id: 'f6', entityId: 'o', name: 'total', type: { kind: 'named', name: 'money' }, doc: 'In US cents, after discounts.' },
+        { id: 'f6', entityId: 'o', name: 'total', type: { kind: 'named', name: 'money' }, doc: 'After discounts, before tax and shipping.' },
         { id: 'f7', entityId: 'l', name: 'order', type: { kind: 'named', name: 'Order' } },
         { id: 'f8', entityId: 'l', name: 'product', type: { kind: 'named', name: 'Product' } },
         { id: 'f9', entityId: 'l', name: 'quantity', type: { kind: 'named', name: 'whole number' } },
@@ -36,9 +36,15 @@ export function samplePage(query: URLSearchParams): PageData {
         { id: 'g1', name: 'Revenue', doc: 'Money kept from paid orders in a period.',
           post: [statement('p1', 'Refunded and cancelled orders do not count.')] },
         { id: 'g2', name: 'New customers', doc: 'Customers whose first paid order falls in a period.' },
+        { id: 'g3', name: 'Agreed price', doc: 'What a customer pays for a product in their region.',
+          parameters: [
+            { name: 'customer', type: { kind: 'named', name: 'Customer' } },
+            { name: 'product', type: { kind: 'named', name: 'Product' } },
+            { name: 'region', type: { kind: 'named', name: 'Region' } },
+          ] },
       ],
-      axioms: [statement('a1', 'Every order belongs to exactly one customer.'),
-               statement('a2', 'A product listed without a price has never been sold.')],
+      axioms: [statement('a1', 'An order is refunded only after it has been paid.'),
+               statement('a2', 'A customer\'s region does not change.')],
       sources: [
         { id: 's1', kind: 'PostgreSQL', connection: 'sales' },
         { id: 's2', kind: 'CSV file', file: 'products.csv' },
@@ -57,6 +63,19 @@ export function samplePage(query: URLSearchParams): PageData {
         { id: 'm4', entityId: 'r', databaseEntityId: 't4' },
         { id: 'm5', entityId: 'p', databaseEntityId: 't5' },
       ],
+    },
+    examples: {
+      things: {
+        c: ['Acme Corp', 'Globex', 'Initech'],
+        o: ['Order 1042', 'Order 1043', 'Order 1044'],
+        l: ['Order 1042: 3 of A4 paper', 'Order 1043: 1 of Stapler'],
+        p: ['A4 paper', 'Stapler'],
+        r: ['EMEA', 'North America'],
+      },
+      links: {
+        f2: [['Acme Corp', 'EMEA'], ['Globex', 'North America']],
+        f3: [['Order 1042', 'Acme Corp'], ['Order 1043', 'Globex']],
+      },
     },
   }
 }

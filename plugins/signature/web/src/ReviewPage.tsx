@@ -1,41 +1,53 @@
-import { BoxIcon, CheckIcon, ChevronDownIcon, DatabaseIcon, LinkIcon, ShieldCheckIcon, SigmaIcon, XIcon } from 'lucide-react'
+import {
+  BoxIcon,
+  CheckIcon,
+  ChevronDownIcon,
+  DatabaseIcon,
+  LinkIcon,
+  NetworkIcon,
+  ShieldCheckIcon,
+  SigmaIcon,
+  XIcon,
+} from 'lucide-react'
 import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react'
 
 import { submit } from './api'
 import { Notice } from './App'
-import { ConnectionsDiagram } from './ConnectionsDiagram'
-import { type Snapshot, type Thing, type Understanding, understandingOf } from './review'
+import { RelationsDiagram } from './RelationsDiagram'
+import { type Examples, type Fact, type Snapshot, type Thing, type Understanding, understandingOf } from './review'
 import { Button, Card, IconBadge, Row, SectionHeading, Tag } from './ui'
 
-type ReviewPageProps = { domain: string; snapshot: Snapshot }
+type ReviewPageProps = { domain: string; snapshot: Snapshot; examples?: Examples }
 type Verdict = 'right' | 'wrong'
 type Item = { key: string; subject: string }
 
-const CONNECTIONS: Item = { key: 'connections', subject: 'How it fits together' }
-
-export function ReviewPage({ domain, snapshot }: ReviewPageProps) {
-  const understanding = useMemo(() => understandingOf(snapshot), [snapshot])
+export function ReviewPage({ domain, snapshot, examples }: ReviewPageProps) {
+  const understanding = useMemo(() => understandingOf(snapshot, examples), [snapshot, examples])
   const items = useMemo(() => itemsOf(understanding), [understanding])
   const [verdicts, setVerdicts] = useState<Record<string, Verdict>>({})
+  const [fixes, setFixes] = useState<Record<string, string>>({})
+  const [fixing, setFixing] = useState(false)
+  const [confirming, setConfirming] = useState(false)
   const [open, setOpen] = useState<string | null>(null)
-  const [note, setNote] = useState<string | null>(null)
   const [sending, setSending] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [decided, setDecided] = useState<'published' | 'changes' | null>(null)
 
   const judge = (item: Item) => (verdict: Verdict) => {
     setVerdicts((current) => ({ ...current, [item.key]: verdict }))
-    if (verdict === 'wrong')
-      setNote((current) => {
-        const opening = `${item.subject}: `
-        if (current?.includes(opening)) return current
-        return current ? `${current.trimEnd()}\n${opening}` : opening
-      })
+    if (verdict === 'wrong') setFixing(true)
   }
+
+  const flaggedItems = items.filter((item) => verdicts[item.key] === 'wrong')
+  const reviewed = items.filter((item) => verdicts[item.key]).length
 
   const decide = async (decision: 'publish' | 'change') => {
     setSending(true)
-    const outcome = await submit({ decision, changes: note ?? '' })
+    const changes = flaggedItems
+      .filter((item) => fixes[item.key]?.trim())
+      .map((item) => `${item.subject}: ${fixes[item.key]!.trim()}`)
+      .join('\n')
+    const outcome = await submit({ decision, changes })
     setSending(false)
     if ('error' in outcome) setError(outcome.error)
     else setDecided(decision === 'publish' ? 'published' : 'changes')
@@ -44,14 +56,11 @@ export function ReviewPage({ domain, snapshot }: ReviewPageProps) {
   if (decided === 'published')
     return <Notice title={`${domain} is published`} body="Go back to Claude to ask your questions." />
   if (decided === 'changes')
-    return <Notice title="Changes sent" body="Go back to Claude. It brings you back here once they are in." />
-
-  const checked = items.filter((item) => verdicts[item.key] === 'right').length
-  const flagged = items.filter((item) => verdicts[item.key] === 'wrong').length
+    return <Notice title="Your corrections are with Signature" body="Go back to Claude. It brings you back here once they are in." />
 
   return (
     <div className="min-h-full">
-      <header className="sticky top-0 z-10 border-b border-border bg-background/95 backdrop-blur">
+      <header className="sticky top-0 z-10 border-b border-border bg-background">
         <div className="mx-auto flex h-14 max-w-[56rem] items-center gap-3 px-6">
           <p className="font-semibold" translate="no">
             Signature
@@ -59,51 +68,48 @@ export function ReviewPage({ domain, snapshot }: ReviewPageProps) {
           <span className="text-faint">/</span>
           <p className="min-w-0 flex-1 truncate text-muted-foreground">{domain}</p>
           <p className="hidden text-muted-foreground tabular-nums sm:block" aria-live="polite">
-            {checked} of {items.length} checked
+            {reviewed} of {items.length} reviewed
           </p>
-          {flagged > 0 ? (
-            <Button variant="primary" onClick={() => setNote((current) => current ?? '')}>
-              Send {flagged} to fix
+          {flaggedItems.length > 0 ? (
+            <Button variant="primary" onClick={() => setFixing(true)}>
+              Send {flaggedItems.length} {flaggedItems.length === 1 ? 'correction' : 'corrections'}
             </Button>
           ) : (
-            <Button variant="primary" disabled={sending} onClick={() => decide('publish')}>
+            <Button variant="primary" onClick={() => setConfirming(true)}>
               Publish
             </Button>
           )}
         </div>
-        {error && note === null ? (
-          <p role="alert" className="mx-auto max-w-[56rem] px-6 pb-3 text-destructive">
-            {error}
-          </p>
-        ) : null}
       </header>
 
       <main className="mx-auto max-w-[56rem] px-6 pt-8 pb-24">
         <h1 className="text-heading-2xl text-balance">Review {domain}</h1>
+        <p className="mt-1 text-body-reading text-muted-foreground">
+          Mark each item Correct or Wrong. Examples come from your own data.
+        </p>
 
-        {understanding.connections.length > 0 ? (
+        {understanding.facts.length > 0 ? (
           <section className="mt-10">
-            <SectionHeading actions={<Verdicts verdict={verdicts[CONNECTIONS.key]} onJudge={judge(CONNECTIONS)} />}>
-              How it fits together
-            </SectionHeading>
+            <SectionHeading>How things relate</SectionHeading>
             <Card>
-              <div className="h-56 border-b border-border">
-                <ConnectionsDiagram understanding={understanding} selected={open} onSelect={setOpen} />
+              <div className="h-64 border-b border-border">
+                <RelationsDiagram understanding={understanding} selected={open} onSelect={setOpen} />
               </div>
-              {understanding.connections.map((connection) => (
-                <Row key={connection.sentence}>
-                  <IconBadge tone="attr">
-                    <LinkIcon />
-                  </IconBadge>
-                  <p className="pt-1.5">{connection.sentence}</p>
-                </Row>
+              {understanding.facts.map((fact) => (
+                <FactRow
+                  key={fact.id}
+                  fact={fact}
+                  selected={open === fact.id || fact.members.includes(open ?? '')}
+                  verdict={verdicts[fact.id]}
+                  onJudge={judge({ key: fact.id, subject: fact.title })}
+                />
               ))}
             </Card>
           </section>
         ) : null}
 
         <section className="mt-10">
-          <SectionHeading>Things</SectionHeading>
+          <SectionHeading>What Signature knows about</SectionHeading>
           <Card>
             {understanding.things.map((thing) => (
               <ThingRow
@@ -127,7 +133,7 @@ export function ReviewPage({ domain, snapshot }: ReviewPageProps) {
                   <IconBadge tone="calc">
                     <SigmaIcon />
                   </IconBadge>
-                  <Words title={calculation.name} lines={[calculation.meaning, ...calculation.conditions]} />
+                  <Lines title={calculation.name} lines={[calculation.meaning, ...calculation.conditions]} />
                   <Verdicts
                     verdict={verdicts[calculation.id]}
                     onJudge={judge({ key: calculation.id, subject: calculation.name })}
@@ -138,18 +144,18 @@ export function ReviewPage({ domain, snapshot }: ReviewPageProps) {
           </section>
         ) : null}
 
-        {understanding.assumptions.length > 0 ? (
+        {understanding.rules.length > 0 ? (
           <section className="mt-10">
-            <SectionHeading>Always true</SectionHeading>
+            <SectionHeading>Rules Signature relies on</SectionHeading>
             <Card>
-              {understanding.assumptions.map((assumption, index) => {
-                const item = { key: `assumption-${index}`, subject: assumption }
+              {understanding.rules.map((rule, index) => {
+                const item = { key: `rule-${index}`, subject: rule }
                 return (
                   <Row key={item.key}>
                     <IconBadge tone="fact">
                       <ShieldCheckIcon />
                     </IconBadge>
-                    <p className="min-w-0 flex-1 pt-1.5">{assumption}</p>
+                    <p className="min-w-0 flex-1 pt-1.5">{rule}</p>
                     <Verdicts verdict={verdicts[item.key]} onJudge={judge(item)} />
                   </Row>
                 )
@@ -159,18 +165,55 @@ export function ReviewPage({ domain, snapshot }: ReviewPageProps) {
         ) : null}
       </main>
 
-      {note !== null ? (
-        <ChangeNote
-          note={note}
-          error={error}
-          sending={sending}
-          onChange={setNote}
-          onSend={() => decide('change')}
-          onClose={() => {
-            setNote(null)
-            setError(null)
-          }}
-        />
+      {confirming ? (
+        <Panel title={`Publish ${domain}?`} onClose={() => setConfirming(false)}>
+          <p className="text-body-reading text-muted-foreground">
+            People your company gives access to can then ask Signature about {domain}. You can correct it and publish
+            again at any time.
+          </p>
+          {reviewed < items.length ? (
+            <p className="mt-3 text-body-reading">
+              {items.length - reviewed} of {items.length} items are not reviewed yet.
+            </p>
+          ) : null}
+          {error ? <Problem>{error}</Problem> : null}
+          <div className="mt-4 flex justify-end gap-2">
+            <Button onClick={() => setConfirming(false)}>Keep reviewing</Button>
+            <Button variant="primary" disabled={sending} onClick={() => decide('publish')}>
+              Publish
+            </Button>
+          </div>
+        </Panel>
+      ) : null}
+
+      {fixing && flaggedItems.length > 0 ? (
+        <Panel title="What is wrong?" onClose={() => setFixing(false)}>
+          <div className="space-y-4">
+            {flaggedItems.map((item, index) => (
+              <label key={item.key} className="block">
+                <span className="mb-1.5 block font-medium">{item.subject}</span>
+                <textarea
+                  autoFocus={index === flaggedItems.length - 1}
+                  value={fixes[item.key] ?? ''}
+                  onChange={(event) => setFixes((current) => ({ ...current, [item.key]: event.target.value }))}
+                  placeholder="Say what is wrong and what is right, in your own words…"
+                  className="min-h-20 w-full resize-y overscroll-contain rounded-(--radius-row) border border-input bg-card p-3 text-body-reading focus:border-ring focus:outline-none"
+                />
+              </label>
+            ))}
+          </div>
+          {error ? <Problem>{error}</Problem> : null}
+          <div className="mt-4 flex justify-end gap-2">
+            <Button onClick={() => setFixing(false)}>Keep reviewing</Button>
+            <Button
+              variant="primary"
+              disabled={sending || !flaggedItems.some((item) => fixes[item.key]?.trim())}
+              onClick={() => decide('change')}
+            >
+              Send to Signature
+            </Button>
+          </div>
+        </Panel>
       ) : null}
     </div>
   )
@@ -178,14 +221,14 @@ export function ReviewPage({ domain, snapshot }: ReviewPageProps) {
 
 function itemsOf(understanding: Understanding): Item[] {
   return [
-    ...(understanding.connections.length > 0 ? [CONNECTIONS] : []),
+    ...understanding.facts.map((fact) => ({ key: fact.id, subject: fact.title })),
     ...understanding.things.map((thing) => ({ key: thing.id, subject: thing.name })),
     ...understanding.calculations.map((calculation) => ({ key: calculation.id, subject: calculation.name })),
-    ...understanding.assumptions.map((assumption, index) => ({ key: `assumption-${index}`, subject: assumption })),
+    ...understanding.rules.map((rule, index) => ({ key: `rule-${index}`, subject: rule })),
   ]
 }
 
-function Words({ title, lines }: { title: string; lines: (string | undefined)[] }) {
+function Lines({ title, lines }: { title: string; lines: (string | undefined)[] }) {
   return (
     <div className="min-w-0 flex-1 pt-1">
       <p className="font-medium">{title}</p>
@@ -194,6 +237,43 @@ function Words({ title, lines }: { title: string; lines: (string | undefined)[] 
           {line}
         </p>
       ))}
+    </div>
+  )
+}
+
+function ForExample({ cases }: { cases: string[] }) {
+  if (cases.length === 0) return null
+  return (
+    <div className="mt-2 flex flex-wrap items-center gap-1.5">
+      <span className="text-faint">For example</span>
+      {cases.map((example) => (
+        <Tag key={example} tone="outline">
+          {example}
+        </Tag>
+      ))}
+    </div>
+  )
+}
+
+type FactRowProps = { fact: Fact; selected: boolean; verdict: Verdict | undefined; onJudge: (verdict: Verdict) => void }
+
+function FactRow({ fact, selected, verdict, onJudge }: FactRowProps) {
+  return (
+    <div className={`border-t border-border first:border-t-0 ${selected ? 'bg-selected' : ''}`}>
+      <div className="flex flex-wrap items-start gap-3 px-4 py-3">
+        <IconBadge tone="attr">{fact.kind === 'pair' ? <LinkIcon /> : <NetworkIcon />}</IconBadge>
+        <div className="min-w-0 flex-1 pt-1">
+          <p className="font-medium">{fact.title}</p>
+          {fact.readings.map((reading) => (
+            <p key={reading} className="mt-0.5">
+              {reading}
+            </p>
+          ))}
+          {fact.meaning ? <p className="mt-0.5 text-muted-foreground">{fact.meaning}</p> : null}
+          <ForExample cases={fact.examples} />
+        </div>
+        <Verdicts verdict={verdict} onJudge={onJudge} />
+      </div>
     </div>
   )
 }
@@ -221,18 +301,21 @@ function ThingRow({ thing, open, onToggle, verdict, onJudge }: ThingRowProps) {
         <IconBadge tone="type">
           <BoxIcon />
         </IconBadge>
-        <button
-          type="button"
-          onClick={onToggle}
-          aria-expanded={open}
-          className="focus-ring min-w-0 flex-1 rounded-(--radius-row) pt-1 text-left"
-        >
-          <span className="flex items-center gap-1.5 font-medium">
-            {thing.name}
-            <ChevronDownIcon className={`size-4 text-faint transition-transform ${open ? 'rotate-180' : ''}`} aria-hidden />
-          </span>
-          {thing.meaning ? <span className="mt-0.5 block text-muted-foreground">{thing.meaning}</span> : null}
-        </button>
+        <div className="min-w-0 flex-1">
+          <button
+            type="button"
+            onClick={onToggle}
+            aria-expanded={open}
+            className="focus-ring w-full rounded-(--radius-row) pt-1 text-left"
+          >
+            <span className="flex items-center gap-1.5 font-medium">
+              {thing.name}
+              <ChevronDownIcon className={`size-4 text-faint transition-transform ${open ? 'rotate-180' : ''}`} aria-hidden />
+            </span>
+            {thing.meaning ? <span className="mt-0.5 block text-muted-foreground">{thing.meaning}</span> : null}
+          </button>
+          <ForExample cases={thing.examples} />
+        </div>
         <Verdicts verdict={verdict} onJudge={onJudge} />
       </div>
       {open ? <ThingDetails thing={thing} /> : null}
@@ -243,22 +326,22 @@ function ThingRow({ thing, open, onToggle, verdict, onJudge }: ThingRowProps) {
 function ThingDetails({ thing }: { thing: Thing }) {
   return (
     <div className="space-y-4 px-4 pb-4 pl-14">
-      {thing.tracked.length > 0 ? (
+      {thing.details.length > 0 ? (
         <table className="w-full overflow-hidden rounded-(--radius-row) border border-border bg-card text-left">
           <thead className="bg-band text-muted-foreground">
             <tr>
               <th className="px-3 py-2 font-medium">Detail</th>
-              <th className="px-3 py-2 font-medium">Kind</th>
+              <th className="px-3 py-2 font-medium">Holds</th>
               <th className="px-3 py-2 font-medium">Meaning</th>
             </tr>
           </thead>
           <tbody>
-            {thing.tracked.map((detail) => (
+            {thing.details.map((detail) => (
               <tr key={detail.name} className="border-t border-border align-top">
                 <td className="px-3 py-2 font-medium break-words">{detail.name}</td>
                 <td className="px-3 py-2">
                   <span className="flex flex-wrap gap-1">
-                    <Tag>{detail.kind}</Tag>
+                    <Tag>{detail.holds}</Tag>
                     {detail.canBeEmpty ? <Tag>Can be empty</Tag> : null}
                   </span>
                 </td>
@@ -268,10 +351,10 @@ function ThingDetails({ thing }: { thing: Thing }) {
           </tbody>
         </table>
       ) : null}
-      {thing.assumptions.map((assumption) => (
-        <p key={assumption} className="flex gap-2">
+      {thing.rules.map((rule) => (
+        <p key={rule} className="flex gap-2">
           <ShieldCheckIcon className="mt-0.5 size-4 shrink-0 text-fact-text" aria-hidden />
-          {assumption}
+          {rule}
         </p>
       ))}
       {thing.from ? (
@@ -288,10 +371,10 @@ function Verdicts({ verdict, onJudge }: { verdict: Verdict | undefined; onJudge:
   return (
     <div className="flex shrink-0 gap-1.5">
       <Choice pressed={verdict === 'right'} tone="right" onClick={() => onJudge('right')} icon={<CheckIcon />}>
-        Looks right
+        Correct
       </Choice>
       <Choice pressed={verdict === 'wrong'} tone="wrong" onClick={() => onJudge('wrong')} icon={<XIcon />}>
-        Not quite
+        Wrong
       </Choice>
     </div>
   )
@@ -326,54 +409,29 @@ function Choice({
   )
 }
 
-type ChangeNoteProps = {
-  note: string
-  error: string | null
-  sending: boolean
-  onChange: (note: string) => void
-  onSend: () => void
-  onClose: () => void
-}
-
-function ChangeNote({ note, error, sending, onChange, onSend, onClose }: ChangeNoteProps) {
-  const field = useRef<HTMLTextAreaElement>(null)
-
-  useEffect(() => {
-    const area = field.current
-    if (!area) return
-    area.focus()
-    area.setSelectionRange(area.value.length, area.value.length)
-  }, [note.split('\n').length])
-
+function Panel({ title, onClose, children }: { title: string; onClose: () => void; children: ReactNode }) {
   return (
     <aside
+      role="dialog"
+      aria-label={title}
       onKeyDown={(event) => event.key === 'Escape' && onClose()}
-      className="fixed inset-x-3 bottom-3 z-20 rounded-(--radius-surface) border border-border bg-card shadow-overlay sm:inset-x-auto sm:top-[4.5rem] sm:right-4 sm:bottom-4 sm:w-[24rem]"
-      aria-label="What to fix"
+      className="fixed inset-x-3 bottom-3 z-20 max-h-[80vh] overflow-y-auto rounded-(--radius-surface) border border-border bg-card p-4 shadow-overlay sm:inset-x-auto sm:top-[4.5rem] sm:right-4 sm:bottom-auto sm:w-[26rem]"
     >
-      <div className="flex h-full flex-col p-4">
-        <div className="flex items-center justify-between">
-          <h2 className="text-heading-sm">What to fix</h2>
-          <Button variant="ghost" onClick={onClose} aria-label="Close">
-            <XIcon />
-          </Button>
-        </div>
-        <textarea
-          ref={field}
-          value={note}
-          onChange={(event) => onChange(event.target.value)}
-          placeholder="A refunded order should not count as revenue…"
-          className="mt-3 min-h-36 flex-1 resize-none overscroll-contain rounded-(--radius-row) border border-input bg-card p-3 text-body-reading focus:border-ring focus:outline-none sm:min-h-0"
-        />
-        {error ? (
-          <p role="alert" className="mt-3 rounded-(--radius-row) bg-destructive-soft px-3 py-2 text-destructive">
-            {error}
-          </p>
-        ) : null}
-        <Button variant="primary" className="mt-3 justify-center" disabled={sending || note.trim() === ''} onClick={onSend}>
-          Send to Signature
+      <div className="mb-3 flex items-center justify-between">
+        <h2 className="text-heading-sm">{title}</h2>
+        <Button variant="ghost" onClick={onClose} aria-label="Close">
+          <XIcon />
         </Button>
       </div>
+      {children}
     </aside>
+  )
+}
+
+function Problem({ children }: { children: ReactNode }) {
+  return (
+    <p role="alert" className="mt-3 rounded-(--radius-row) bg-destructive-soft px-3 py-2 text-destructive">
+      {children}
+    </p>
   )
 }

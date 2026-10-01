@@ -40,7 +40,9 @@ export function ConnectPage({ suggestedName }: { suggestedName: string | null })
         into your system keychain; Claude never sees it and it is never sent to Signature.
       </p>
 
-      <form onSubmit={connect} className="mt-10 space-y-5">
+      <AskIt />
+
+      <form onSubmit={connect} className="mt-8 space-y-5">
         <fieldset>
           <legend className="mb-2 font-medium">Database</legend>
           <div className="flex gap-2">
@@ -110,3 +112,35 @@ function Field({ label, name, hint, required = true, ...input }: FieldProps) {
     </label>
   )
 }
+
+const REQUEST = `Signature needs to read our database. Could you send me:
+- the host and port
+- the database name
+- a read-only user and its password`
+
+// Most people setting up Signature do not know these details; whoever looks after the database does.
+function AskIt() {
+  const [open, setOpen] = useState(false)
+  const [copied, setCopied] = useState(false)
+  if (!open)
+    return (
+      <button type="button" onClick={() => setOpen(true)} className="focus-ring mt-4 rounded-full text-left underline underline-offset-4">
+        I don't have these details
+      </button>
+    )
+  return (
+    <div className="mt-4 rounded-(--radius-surface) border border-border bg-card p-4 shadow-low">
+      <p className="font-medium">Ask whoever looks after this database, often IT</p>
+      <pre className="mt-2 font-sans text-body-reading whitespace-pre-wrap text-muted-foreground">{REQUEST}</pre>
+      <button
+        type="button"
+        onClick={() => navigator.clipboard.writeText(REQUEST).then(() => setCopied(true))}
+        className="focus-ring mt-3 inline-flex h-8 items-center rounded-full border border-input bg-card px-3.5 text-sm font-medium hover:bg-muted"
+      >
+        {copied ? 'Copied' : 'Copy this message'}
+      </button>
+      <p className="mt-3 text-muted-foreground">This page stays open while you wait.</p>
+    </div>
+  )
+}
+

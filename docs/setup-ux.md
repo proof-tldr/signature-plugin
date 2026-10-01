@@ -53,6 +53,17 @@ yours to work out.
 - The backend endpoints the plugin needs are stubbed by a stand-in until they exist; see
   [backend-contract.md](backend-contract.md).
 
+## How the review reads
+
+- Each relationship is one fact read from both sides ("Each order has exactly one customer." / "A customer can
+  have any number of orders, including none."), never from whichever side the model stores it. The diagram has
+  no arrows and no left-to-right layout, so it implies no direction or hierarchy.
+- A fact tying three or more things together (or a thing that exists to tie others, like an order line) reads as
+  one sentence and is drawn as a hub joined to each thing; splitting it into pairs would lose what it says.
+- Real examples from the customer's own data sit beside each item, found on their machine.
+- Signature's model holds one wording per relationship. Wording for both directions ("places" / "is placed by")
+  and for many-way facts would let the page drop the generic "has".
+
 ## Open questions
 
 - What does Signature actually need to know about each source?

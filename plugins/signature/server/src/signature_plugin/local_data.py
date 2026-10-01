@@ -89,19 +89,35 @@ def run(sources: Sequence[Source], sql: str) -> Result:
     """Signature's query over the sources, run if it is one SELECT over their tables, within the time and row
     limits."""
     with _opened(sources) as connection:
-        _refuse_unless_plain_select(connection, sql)
-        timer = threading.Timer(QUERY_TIMEOUT_SECONDS, connection.interrupt)
-        timer.start()
-        try:
-            cursor = connection.execute(sql)
-            rows = cursor.fetchmany(MAX_RESULT_ROWS + 1)
-        except duckdb.InterruptException as stopped:
-            raise QueryRefused(f'The query ran past {QUERY_TIMEOUT_SECONDS:.0f} seconds and was stopped.') from stopped
-        except duckdb.Error as failure:
-            raise QueryRefused(f'The query failed on your data: {failure}') from failure
-        finally:
-            timer.cancel()
-        columns = [description[0] for description in cursor.description or []]
+        return _ran(connection, sql)
+
+
+def run_each(sources: Sequence[Source], queries: Sequence[str]) -> list[Result | None]:
+    """Each query's result over one opening of the sources, None for a query that was refused or failed."""
+    results: list[Result | None] = []
+    with _opened(sources) as connection:
+        for sql in queries:
+            try:
+                results.append(_ran(connection, sql))
+            except QueryRefused:
+                results.append(None)
+    return results
+
+
+def _ran(connection: duckdb.DuckDBPyConnection, sql: str) -> Result:
+    _refuse_unless_plain_select(connection, sql)
+    timer = threading.Timer(QUERY_TIMEOUT_SECONDS, connection.interrupt)
+    timer.start()
+    try:
+        cursor = connection.execute(sql)
+        rows = cursor.fetchmany(MAX_RESULT_ROWS + 1)
+    except duckdb.InterruptException as stopped:
+        raise QueryRefused(f'The query ran past {QUERY_TIMEOUT_SECONDS:.0f} seconds and was stopped.') from stopped
+    except duckdb.Error as failure:
+        raise QueryRefused(f'The query failed on your data: {failure}') from failure
+    finally:
+        timer.cancel()
+    columns = [description[0] for description in cursor.description or []]
     return Result(columns=columns, rows=rows[:MAX_RESULT_ROWS], truncated=len(rows) > MAX_RESULT_ROWS)
 
 

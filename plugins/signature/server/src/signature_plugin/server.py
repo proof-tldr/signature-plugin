@@ -27,6 +27,7 @@ from signature_plugin.backend import (
     SignatureUnreachable,
     connected,
 )
+from signature_plugin.examples import examples_of
 from signature_plugin.local_data import QueryRefused
 from signature_plugin.pages import Page, Pages, Refusal
 from signature_plugin.progress import ProgressStore
@@ -339,7 +340,11 @@ async def review(ctx: Context[PluginState]) -> Reviewed | NotDecided | InputRequ
 
         async def review_page(pages: Pages) -> Page[ReviewDecision]:
             domain = await signature.domain()
-            data = {'page': 'review', 'domain': domain.name, 'snapshot': await signature.model_snapshot()}
+            snapshot = await signature.model_snapshot()
+            cases = await anyio.to_thread.run_sync(
+                lambda: examples_of(snapshot, session.sources.all(), lambda source: _source_id(signature, source))
+            )
+            data = {'page': 'review', 'domain': domain.name, 'snapshot': snapshot, 'examples': cases}
             return await pages.show(data, _review_decision)
 
         outcome = await _decision_on_page(

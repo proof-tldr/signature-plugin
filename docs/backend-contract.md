@@ -21,7 +21,7 @@ id it chose: it reads the one domain the key opens from `GET /domains`.
 | `GET /domains/{id}/conversation/clarifying-questions` → `{questions: [{id, question, suggestedAnswers}]}` | exists |
 | `POST /domains/{id}/conversation/clarifying-questions/{questionId}/answer` `{answer}` → `{turn: {id}}` | exists |
 | `POST /domains/{id}/publish` | exists; a domain key may call it (checked 2026-10-01) |
-| `GET /domains/{id}/model/snapshot` → the whole model, rendered as the review page | exists |
+| `GET /domains/{id}/model/snapshot` → the whole model, rendered as the review page; its `mappings`, `mappingFields` and `columns` also let the plugin pull real examples from the customer's data | exists |
 | `POST /domains/{id}/queries`, `GET /domains/{id}/queries/{queryId}` | **new** |
 
 ## Documents

@@ -1,9 +1,9 @@
 // The plugin's local server: the page's data, and where the customer's decision goes. Every page lives at its
 // own private address, and its data and decision sit beside it.
-import type { Snapshot } from './review'
+import type { Examples, Snapshot } from './review'
 
 export type PageData =
-  | { page: 'review'; domain: string; snapshot: Snapshot }
+  | { page: 'review'; domain: string; snapshot: Snapshot; examples?: Examples }
   | { page: 'connect'; suggestedName: string | null }
 
 export type Outcome = { done: true } | { error: string }

@@ -28,6 +28,8 @@ from signature_plugin.fake_backend import FakeSignature
 
 PLUGIN = Path(__file__).resolve().parents[2]
 BROWSER = Path(__file__).with_name('browser.py')
+# Each scenario's Claude Code debug log, kept after the run so a failure can be traced to the server's own log.
+LOGS = Path(__file__).with_name('logs')
 TOOL_PREFIX = 'mcp__plugin_signature_signature__'
 STATUS_QUESTION = 'What did each status bring in?'
 STATUS_SQL = 'SELECT status, SUM(amount_cents) AS total FROM files.orders GROUP BY status ORDER BY status'
@@ -172,6 +174,7 @@ def _claude_session(scenario: Scenario, folder: Path, address: str, signature: F
         'BROWSER': f'{sys.executable} {BROWSER} %s &',
         'EVAL_PAGE_FORM': json.dumps(scenario.page_form) if scenario.page_form else '',
     }
+    LOGS.mkdir(exist_ok=True)
     started = time.monotonic()
     completed = subprocess.run(
         [
@@ -186,6 +189,8 @@ def _claude_session(scenario: Scenario, folder: Path, address: str, signature: F
             '--output-format',
             'stream-json',
             '--verbose',
+            '--debug-file',
+            str(LOGS / f'{scenario.name}.log'),
         ],
         cwd=folder,
         env=environment,
@@ -238,6 +243,8 @@ def _report(results: list[tuple[Scenario, Run, list[str]]]) -> str:
         )
         lines += [f'    failed: {name}' for name in failed]
         lines += [f'    tool error: {error}' for error in run.tool_errors]
+        if failed:
+            lines.append(f'    log: {LOGS / f"{scenario.name}.log"}')
     passed = sum(1 for _, _, failed in results if not failed)
     lines.append(f'{passed}/{len(results)} scenarios passed')
     return '\n'.join(lines)
