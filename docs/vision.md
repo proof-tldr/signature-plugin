@@ -13,9 +13,9 @@ rebuilt from scratch around it, replacing the current remote-only version.
 
 ## Architecture
 
-- **A Claude Code plugin**, bundling a local MCP server with skills that teach Claude how to
+- **A Claude Code plugin** bundles a local MCP server with skills that teach Claude how to
   set up a Signature domain.
-- **A local MCP server** runs on the customer's machine. Claude calls its tools.
+- **The local MCP server** runs on the customer's machine. Claude calls its tools.
 - **It calls the Signature-Platform REST API directly** (`openapi.json` is the contract). There
   is no second MCP server on the backend. The existing remote `/mcp` endpoint in
   Signature-Platform (`src/mcp/`) can stay for cloud-only use.
@@ -27,15 +27,15 @@ Use that.
 
 - **Send meaning, not just files.** Tools accept Claude's explanation of the data, such as
   "one row per line item; `status=7` means refunded", alongside the data itself.
-- **Label provenance.** Every claim is marked either *user said* or *Claude inferred*, so the
-  model builder weighs it and asks the user to confirm inferred claims.
+- **Label provenance.** Every claim is marked *user said* or *Claude inferred*, so the model
+  builder weighs it and asks the user to confirm inferred claims.
 - **Schemas without credentials.** For remote databases, Claude sends DDL, sample rows and
-  notes. The customer never has to give us database access.
+  notes. The customer never gives us database access.
 - **Large files** go through presigned upload, not tool arguments, which pass through
   Claude's context.
 - **Privacy default:** schema, samples and descriptions, not full datasets.
 - **Clarifying questions** from the model builder (the `clarifications` module) are answered by
-  Claude where it can, and only real judgment calls go to the human.
+  Claude where it can; only real judgment calls go to the human.
 
 Tools this implies: `create_domain`, `add_document`, `describe_dataset`,
 `list_clarifications`, `answer_clarification`, `get_domain_status`.
@@ -75,10 +75,10 @@ Claude sees a question in and an answer out, never the query.
 
 A customer can have many domains.
 
-- **Later, not now:** a domain-scoped API key, so one connection can only reach one domain.
+- **Later, not now:** a domain-scoped API key, so one connection reaches only one domain.
 - **Writes land in a draft;** publishing stays a human action in the web app.
-- Writes carry the revision Claude last read, and stale edits are rejected.
-- Confirm destructive calls with MCP elicitation, and mark them `destructiveHint`.
+- Writes carry the revision Claude last read; stale edits are rejected.
+- Confirm destructive calls with MCP elicitation and mark them `destructiveHint`.
 - Every tool result names the domain it acted on.
 
 ## Defects in Signature-Platform's current `src/mcp`
@@ -86,20 +86,20 @@ A customer can have many domains.
 Found in review on 2026-09-30, not yet fixed:
 
 1. **A thrown error contradicts the README.** `answerOf` throws when the answer isn't in its
-   thread (`tools.ts`). That becomes a protocol error, not the readable tool error the README
+   thread (`tools.ts`), giving a protocol error, not the readable tool error the README
    promises.
 2. **A non-JSON response crashes the call.** `applicationCallAs` runs `JSON.parse` on every
    response body (`app-routes/mcp-routes.ts`).
 3. **A type check is switched off.** `input as never` in `server.ts` hides mismatches between
    a tool's schema and its `run`.
-4. **Retries can ask twice.** `ask_question` makes a new idempotency key per call, so a retried
-   call asks, and bills, twice.
+4. **Retries can ask twice.** `ask_question` makes a new idempotency key per call, so a retry
+   asks, and bills, twice.
 5. **Only `GET` and `POST`.** `ApplicationRequest` allows only these, so the model-editing
-   endpoints (`PATCH`, `DELETE`) can't be reached.
+   endpoints (`PATCH`, `DELETE`) are unreachable.
 
 ## Open questions
 
 - The current plugin shows answers only to the user and blocks Claude from reading them.
-  Keep that behavior or not?
-- Which language should the local server use? DuckDB supports both Python, which would let
-  it reuse `packages/runtime`, and Node.
+  Keep that?
+- Which language for the local server? DuckDB supports Python, which would let it reuse
+  `packages/runtime`, and Node.
