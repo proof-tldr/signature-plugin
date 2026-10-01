@@ -133,7 +133,7 @@ async def report_source(domain_id: str, service: str) -> SourceReported:
     except catalog_readers.SourceNotUsable as unusable:
         raise ToolError(str(unusable)) from unusable
     await through_signature(lambda signature: signature_api.report_source(
-        signature, domain_id, service, structure.database))
+        signature, domain_id, service, structure.database, service))
     return SourceReported(source=service, tables=structure.tables)
 
 
@@ -147,7 +147,7 @@ async def report_files(domain_id: str, path: str) -> SourceReported:
         structure = await catalog_readers.read_structure('files', location)
     except catalog_readers.SourceNotUsable as unusable:
         raise ToolError(str(unusable)) from unusable
-    name = location.rstrip('/').rsplit('/', 1)[-1]
+    name = local_files.source_name_of(location)
     await through_signature(lambda signature: signature_api.report_source(
         signature, domain_id, location, structure.database, name))
     return SourceReported(source=name, tables=structure.tables)

@@ -27,7 +27,13 @@ def files_at(absolute: str) -> list[Path]:
 
 
 def format_of(path: Path) -> str:
+    """The format of a file `files_at` returned."""
     return FORMAT_OF_SUFFIX[path.suffix.lower()]
+
+
+def source_name_of(absolute: str) -> str:
+    """What a location is reported as: its last path component."""
+    return Path(absolute).name or absolute
 
 
 def names_of(paths: list[Path]) -> dict[Path, str]:

@@ -66,31 +66,45 @@ async def read_postgresql(service: str) -> dict:
     return postgresql_database(PostgresqlCatalogRows(relations, columns, primary_keys))
 
 
-# How DuckDB describes each format's columns: the table function that reads it, and what it needs loaded first.
+@dataclass(frozen=True)
+class FileFormat:
+    """How DuckDB describes one format's columns: the query that reads it, and the extension it needs loaded first."""
+    describe: str
+    extension: str | None = None
+
+
 # https://duckdb.org/docs/stable/guides/meta/describe, https://duckdb.org/docs/stable/data/csv/auto_detection,
 # https://duckdb.org/docs/stable/data/parquet/overview, https://duckdb.org/docs/stable/data/json/overview,
 # https://duckdb.org/docs/stable/core_extensions/excel
-DESCRIBE_FILE = {
-    'csv': 'DESCRIBE SELECT * FROM read_csv_auto(?)',
-    'tsv': "DESCRIBE SELECT * FROM read_csv(?, delim = '\t', header = true)",
-    'parquet': 'DESCRIBE SELECT * FROM read_parquet(?)',
-    'json': 'DESCRIBE SELECT * FROM read_json_auto(?)',
-    'excel': 'DESCRIBE SELECT * FROM read_xlsx(?)',
+FILE_FORMATS = {
+    'csv': FileFormat('DESCRIBE SELECT * FROM read_csv_auto(?)'),
+    'tsv': FileFormat("DESCRIBE SELECT * FROM read_csv(?, delim = '\t', header = true)"),
+    'parquet': FileFormat('DESCRIBE SELECT * FROM read_parquet(?)'),
+    'json': FileFormat('DESCRIBE SELECT * FROM read_json_auto(?)'),
+    'excel': FileFormat('DESCRIBE SELECT * FROM read_xlsx(?)', extension='excel'),
 }
 
 
+def load_extensions(connection: duckdb.DuckDBPyConnection, formats: set[str]) -> None:
+    for extension in sorted({FILE_FORMATS[name].extension for name in formats} - {None}):
+        connection.execute(f'INSTALL {extension}')
+        connection.execute(f'LOAD {extension}')
+
+
+def describe_file(connection: duckdb.DuckDBPyConnection, name: str, path: Path) -> FileStructure:
+    """One file's columns, from DuckDB's DESCRIBE of it: types are inferred from a sample of the file; no row leaves."""
+    format_name = local_files.format_of(path)
+    described = connection.execute(FILE_FORMATS[format_name].describe, [str(path)]).fetchall()
+    return FileStructure(name, format_name, [FileColumn(column, duckdb_type, nullable == 'YES')
+                                             for column, duckdb_type, nullable, *_ in described])
+
+
 def describe_files(paths: list[Path]) -> list[FileStructure]:
-    """Each file's columns, from DuckDB's DESCRIBE of it: its types are inferred from a sample of the file, and no row
-    leaves this function."""
     names = local_files.names_of(paths)
     connection = duckdb.connect()
     try:
-        if any(local_files.format_of(path) == 'excel' for path in paths):
-            connection.execute('INSTALL excel')
-            connection.execute('LOAD excel')
-        return [FileStructure(names[path], local_files.format_of(path), [
-            FileColumn(name, duckdb_type, nullable == 'YES') for name, duckdb_type, nullable, *_ in connection.execute(
-                DESCRIBE_FILE[local_files.format_of(path)], [str(path)]).fetchall()]) for path in paths]
+        load_extensions(connection, {local_files.format_of(path) for path in paths})
+        return [describe_file(connection, names[path], path) for path in paths]
     finally:
         connection.close()
 
@@ -115,7 +129,7 @@ class Adapter:
 ADAPTERS = {
     'postgresql': Adapter(read_postgresql, (psycopg.Error, OSError), 'service',
                           'Check it is in ~/.pg_service.conf and its password in ~/.pgpass.'),
-    'files': Adapter(read_files, (duckdb.Error, OSError), 'files at',
+    'files': Adapter(read_files, (duckdb.Error, OSError), 'the files at',
                      'Check the files are readable; Excel files also need DuckDB\'s excel extension, which it '
                      'downloads once.'),
 }

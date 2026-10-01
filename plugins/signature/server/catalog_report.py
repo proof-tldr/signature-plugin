@@ -88,8 +88,11 @@ def files_database(files: list[FileStructure]) -> Row:
         for file in files]}}
 
 
+TABLES_OF = {
+    'postgresql': lambda catalog: sum(len(schema['relations']) for schema in catalog['schemas']),
+    'files': lambda catalog: len(catalog['files']),
+}
+
+
 def table_count(database: Row) -> int:
-    catalog = database['catalog']
-    if database['adapter'] == 'files':
-        return len(catalog['files'])
-    return sum(len(schema['relations']) for schema in catalog['schemas'])
+    return TABLES_OF[database['adapter']](database['catalog'])

@@ -44,7 +44,6 @@ def test_tables_are_counted_across_schemas():
     assert table_count(EXPECTED) == 3
 
 
-
 def test_duckdb_types_become_the_names_signature_takes():
     assert [duckdb_type_name(described) for described in
             ['BIGINT', 'DECIMAL(18,3)', 'INTEGER[]', 'INTEGER[3]', 'STRUCT(a INTEGER)', 'TIMESTAMP_MS',
