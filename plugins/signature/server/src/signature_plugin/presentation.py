@@ -3,7 +3,7 @@ rows it found."""
 
 from typing import Any
 
-from signature_plugin.local_data import Result
+from signature_local_data import Result
 
 SHOWN_ROWS = 50
 CELL_WIDTH = 40

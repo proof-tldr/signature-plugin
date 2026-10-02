@@ -17,6 +17,7 @@ import anyio
 from mcp.server.mcpserver import Context, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp_types import ElicitRequest, ElicitRequestURLParams, ElicitResult, InputRequiredResult, ToolAnnotations
+from signature_local_data import LocalData, QueryRefused
 
 from signature_plugin import handoff, presentation
 from signature_plugin.backend import (
@@ -28,11 +29,10 @@ from signature_plugin.backend import (
     connected,
 )
 from signature_plugin.examples import examples_of
-from signature_plugin.local_data import LocalData, QueryRefused
 from signature_plugin.pages import Page, Pages, Refusal
 from signature_plugin.progress import ProgressStore
 from signature_plugin.settings import NotConfigured, from_environment
-from signature_plugin.sources import DatabaseSource, FileSource, Source, SourceRefused, Sources
+from signature_plugin.sources import DatabaseSource, FileSource, Source, SourceRefused, Sources, password_of
 
 POLL_SECONDS = 1.0
 # How long one call waits on Signature or on the customer before handing back to Claude, under Claude Code's limit
@@ -134,7 +134,7 @@ class Decided[T]:
 
 @asynccontextmanager
 async def _plugin_state(_server: MCPServer[PluginState]) -> AsyncGenerator[PluginState]:
-    local = LocalData()
+    local = LocalData(password_of)
     try:
         yield PluginState(pages=Pages(), waiting_pages={}, local=local)
     finally:

@@ -2,8 +2,8 @@ import os
 from pathlib import Path
 
 import pytest
+from signature_local_data import LocalData, QueryRefused
 
-from signature_plugin.local_data import LocalData, QueryRefused
 from signature_plugin.sources import FileSource, SourceRefused, Sources
 
 

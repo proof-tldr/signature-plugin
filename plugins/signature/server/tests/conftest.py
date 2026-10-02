@@ -12,9 +12,10 @@ import keyring
 import pytest
 import uvicorn
 from keyring.backend import KeyringBackend
+from signature_local_data import LocalData
 
 from signature_plugin.fake_backend import FakeSignature
-from signature_plugin.local_data import LocalData
+from signature_plugin.sources import password_of
 
 ORDERS_SQL = 'SELECT status, SUM(amount_cents) AS total FROM files.orders GROUP BY status ORDER BY status'
 
@@ -48,7 +49,7 @@ def memory_keyring() -> Generator[MemoryKeyring]:
 @pytest.fixture
 def local() -> Generator[LocalData]:
     """The sources' DuckDB, kept open between calls as the server keeps it."""
-    opened = LocalData()
+    opened = LocalData(password_of)
     yield opened
     opened.close()
 

@@ -758,6 +758,28 @@ wheels = [
 ]
 
 [[package]]
+name = "signature-local-data"
+version = "0.1.0"
+source = { editable = "../local-data" }
+dependencies = [
+    { name = "duckdb" },
+    { name = "pydantic" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "duckdb", specifier = ">=1.5.6,<2" },
+    { name = "pydantic", specifier = ">=2.11,<3" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pyright", specifier = ">=1.1.414" },
+    { name = "pytest", specifier = ">=9.1,<10" },
+    { name = "ruff", specifier = ">=0.16,<1" },
+]
+
+[[package]]
 name = "signature-plugin"
 version = "0.3.0"
 source = { editable = "." }
@@ -766,6 +788,8 @@ dependencies = [
     { name = "keyring" },
     { name = "mcp" },
     { name = "platformdirs" },
+    { name = "pydantic" },
+    { name = "signature-local-data" },
 ]
 
 [package.dev-dependencies]
@@ -781,6 +805,8 @@ requires-dist = [
     { name = "keyring", specifier = ">=25.7,<26" },
     { name = "mcp", specifier = "==2.2.0" },
     { name = "platformdirs", specifier = ">=4.3,<5" },
+    { name = "pydantic", specifier = ">=2.11,<3" },
+    { name = "signature-local-data", editable = "../local-data" },
 ]
 
 [package.metadata.requires-dev]

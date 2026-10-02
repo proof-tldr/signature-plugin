@@ -10,7 +10,8 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from signature_plugin.local_data import LocalData
+from signature_local_data import LocalData
+
 from signature_plugin.sources import Source
 
 PER_ITEM = 3
