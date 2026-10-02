@@ -12,7 +12,6 @@ dependencies = [
 
 [project.scripts]
 signature-mcp = "signature_plugin.server:main"
-signature-show-answer = "signature_plugin.show_answer:main"
 signature-fake-backend = "signature_plugin.fake_backend:main"
 
 [dependency-groups]

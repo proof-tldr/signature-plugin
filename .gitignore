@@ -6,3 +6,5 @@ node_modules/
 test-results/
 playwright-report/
 plugins/signature/server/evals/logs/
+plugins/signature/tsconfig.json
+plugins/signature/.claude-plugin/types/

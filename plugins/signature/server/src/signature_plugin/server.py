@@ -11,6 +11,7 @@ import os
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from decimal import Decimal
 from typing import Any, Literal, TypedDict
 
 import anyio
@@ -18,7 +19,6 @@ from mcp.server.mcpserver import Context, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp_types import ElicitRequest, ElicitRequestURLParams, ElicitResult, InputRequiredResult, ToolAnnotations
 
-from signature_plugin import handoff, presentation
 from signature_plugin.backend import (
     OpenQuestion,
     Preparation,
@@ -28,7 +28,7 @@ from signature_plugin.backend import (
     connected,
 )
 from signature_plugin.examples import examples_of
-from signature_plugin.local_data import LocalData, QueryRefused
+from signature_plugin.local_data import LocalData, QueryRefused, Result
 from signature_plugin.pages import Page, Pages, Refusal
 from signature_plugin.progress import ProgressStore
 from signature_plugin.settings import NotConfigured, from_environment
@@ -38,6 +38,8 @@ POLL_SECONDS = 1.0
 # How long one call waits on Signature or on the customer before handing back to Claude, under Claude Code's limit
 # on a single tool call. Evaluations shorten it.
 WAIT_SECONDS = float(os.environ.get('SIGNATURE_WAIT_SECONDS', '540'))
+# The rows of an answer Claude reads and the customer is shown; a larger result is cut here and says so.
+SHOWN_ROWS = 200
 
 INSTRUCTIONS = """Signature turns the customer's data and documents into a domain it can answer questions about
 with proven SQL. Your API key opens exactly one domain, so you never choose one.
@@ -46,7 +48,13 @@ To set one up, follow the setup skill: ask the customer where their data lives, 
 as sources, take the documents they give you, build, answer Signature's questions with them, then open the
 review so they can publish. Pass documents as they are; do not go looking for more.
 
-Answers to questions are shown to the customer, never to you. Do not guess, restate or summarise them."""
+Once the domain is published, every question about the customer's data (how many, how much, which, the
+highest, the average, any lookup in it) goes to ask_question, even when the files can be read here: Signature
+proves its answer, which reading or querying the data yourself does not. Answer such a question from the data
+yourself only when the customer asks you to.
+
+Show the customer each result as its note says, unless what follows the result says Signature has drawn it for
+them already: then do not restate it, and say only what they need next, in a sentence."""
 
 type PagePurpose = Literal['connect', 'review']
 
@@ -68,6 +76,7 @@ class Status(TypedDict):
     published: bool
     sources: list[SourceSummary]
     open_questions: list[QuestionView]
+    note: str
 
 
 class Added(TypedDict):
@@ -100,8 +109,21 @@ class Reviewed(TypedDict):
     build: BuildProgress | None
 
 
+type Cell = str | int | float | bool | None
+
+
 class Asked(TypedDict):
-    state: Literal['shown', 'unanswerable', 'unproven', 'stale']
+    """An answer as Claude reads it and the plugin's mod draws it under the call: the question, how Signature read it,
+    and the rows its proven query found on the customer's data; or why there is no answer."""
+
+    state: Literal['answered', 'unanswerable', 'unproven', 'stale']
+    question: str
+    reading: str | None
+    columns: list[str]
+    rows: list[list[Cell]]
+    row_count: int
+    truncated: bool
+    reason: str | None
     note: str
 
 
@@ -184,6 +206,7 @@ async def get_status() -> Status:
             published=domain.published_at is not None,
             sources=[_summary(source) for source in session.sources.all()],
             open_questions=await _numbered_questions(session),
+            note='Tell the customer, in a sentence or two, where their domain stands and what they can do next.',
         )
 
 
@@ -373,9 +396,10 @@ async def review(ctx: Context[PluginState]) -> Reviewed | NotDecided | InputRequ
 
 @server.tool(
     title='Ask Signature',
-    description="Asks Signature a question about the customer's published domain. Signature writes the SQL; it "
-    "runs here on the customer's data, and the answer is shown to the customer, not to you. Set follow_up to "
-    'true to continue from the previous question.',
+    description="Asks Signature a question about the customer's data. Use it for every such question, rather than "
+    'reading or querying the data yourself: Signature proves a SQL query that answers it, the query runs here on '
+    "the customer's data, and its rows come back to show the customer. Set follow_up to true to continue from the "
+    'previous question.',
     annotations=ToolAnnotations(read_only_hint=True, idempotent_hint=True, open_world_hint=True),
 )
 @_tool_errors
@@ -396,32 +420,85 @@ async def ask_question(question: str, ctx: Context[PluginState], follow_up: bool
             case 'planned' if plan.sql:
                 await ctx.report_progress(0, message='Running it on your data…')
                 result = await anyio.to_thread.run_sync(local.run, session.sources.all(), plan.sql)
-                handoff.leave(question, presentation.answer_text(plan.reading, plan.columns, result))
-                return Asked(state='shown', note='The answer was shown to the customer. You cannot see it.')
+                return _answered(question, plan.reading, plan.columns, result)
             case 'unanswerable':
-                handoff.leave(question, f"Signature can't answer this from your domain: {plan.reason}")
-                return Asked(
-                    state='unanswerable',
-                    note='Signature could not answer this from the domain, and the customer was told why.',
+                return _unanswered(
+                    question,
+                    'unanswerable',
+                    plan.reason,
+                    'Tell the customer why Signature cannot answer this, and suggest, in a sentence, how they could '
+                    'ask it in terms the domain has.',
                 )
             case 'stale':
-                handoff.leave(
-                    question, 'Your data has changed shape since Signature was published, so it needs updating.'
-                )
-                return Asked(
-                    state='stale',
-                    note="The customer's tables or columns changed after publishing. Call build, then review so "
-                    'they can publish again, then ask again.',
+                return _unanswered(
+                    question,
+                    'stale',
+                    'Your data has changed shape since the domain was published.',
+                    "The customer's tables or columns changed after publishing. Call build, then review so they can "
+                    'publish again, then ask again.',
                 )
             case 'failed':
-                handoff.leave(question, f'Signature could not prove a query that answers this: {plan.reason}')
-                return Asked(
-                    state='unproven',
-                    note='Signature could not prove an answer, so nothing was run, and the customer was told why. '
-                    'Offer to ask it more simply, one part at a time.',
+                return _unanswered(
+                    question,
+                    'unproven',
+                    plan.reason,
+                    'Tell the customer Signature could not prove an answer, so nothing ran, and offer to ask it more '
+                    'simply, one part at a time.',
                 )
             case _:
                 raise ToolError('Signature could not work out a query for this question.')
+
+
+ANSWERED_NOTE = (
+    'Show the customer this answer: how Signature read the question, in a line, then the rows as a Markdown table '
+    'under readable headers (the first 20 when there are more, saying how many there are), then one sentence on '
+    'what stands out. Do not describe how it was computed beyond what `reading` says. For anything that needs '
+    'other numbers, ask Signature again (with follow_up for a refinement of this question) rather than working it '
+    'out yourself.'
+)
+
+
+def _answered(question: str, reading: str | None, names: list[str], result: Result) -> Asked:
+    """The rows of a proven query, under the names Signature gave its columns, or the query's own."""
+    columns = names if len(names) == len(result.columns) else result.columns
+    rows = [[_cell(value) for value in row] for row in result.rows[:SHOWN_ROWS]]
+    return Asked(
+        state='answered',
+        question=question,
+        reading=reading,
+        columns=columns,
+        rows=rows,
+        row_count=len(result.rows),
+        truncated=result.truncated or len(result.rows) > SHOWN_ROWS,
+        reason=None,
+        note=ANSWERED_NOTE,
+    )
+
+
+def _unanswered(
+    question: str, state: Literal['unanswerable', 'unproven', 'stale'], reason: str | None, note: str
+) -> Asked:
+    return Asked(
+        state=state,
+        question=question,
+        reading=None,
+        columns=[],
+        rows=[],
+        row_count=0,
+        truncated=False,
+        reason=reason,
+        note=note,
+    )
+
+
+def _cell(value: object) -> Cell:
+    """A value as JSON carries it: a number or text as it is, a decimal as a number, anything else, such as a date,
+    as its text."""
+    if value is None or isinstance(value, str | int | float | bool):
+        return value
+    if isinstance(value, Decimal):
+        return float(value)
+    return str(value)
 
 
 async def _document(location: str) -> tuple[str, bytes]:

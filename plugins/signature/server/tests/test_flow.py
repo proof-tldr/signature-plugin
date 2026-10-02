@@ -1,9 +1,7 @@
 """The whole setup and asking flow, through a real MCP client, against the stand-in Signature."""
 
-import io
 import json
 import os
-import re
 from pathlib import Path
 from typing import Any
 
@@ -14,7 +12,6 @@ from mcp import Client
 from mcp.client.session import ClientRequestContext
 from mcp_types import ElicitRequestParams, ElicitRequestURLParams, ElicitResult
 
-from signature_plugin import handoff, show_answer
 from signature_plugin.fake_backend import FakeSignature
 from signature_plugin.server import server
 
@@ -97,17 +94,9 @@ async def test_setup_from_files_and_documents_to_published_answers(
         assert plugin_environment.published_at is not None
 
         asked = await called(client, 'ask_question', {'question': 'What did each status bring in?'})
-        assert 'cannot see it' in asked['note']
-        assert 'paid' not in json.dumps(asked)
-
-    hook_input = {'tool_input': {'question': 'What did each status bring in?'}, 'tool_response': json.dumps(asked)}
-    monkeypatch.setattr('sys.stdin', io.StringIO(json.dumps(hook_input)))
-    shown = io.StringIO()
-    monkeypatch.setattr('sys.stdout', shown)
-    show_answer.main()
-    message = json.loads(shown.getvalue())['systemMessage']
-    assert 'total amount per order status' in message
-    assert re.search(r'paid +│ 1700', message) and re.search(r'refunded +│ 500', message)
+    assert asked['state'] == 'answered' and asked['reading'] == 'total amount per order status'
+    assert sorted(asked['rows']) == [['paid', 1700], ['refunded', 500]]
+    assert asked['row_count'] == 2 and not asked['truncated']
 
 
 async def test_a_change_asked_for_in_review_is_built(
@@ -255,7 +244,7 @@ async def test_a_question_after_the_sources_change_shape_asks_for_a_rebuild(
         await called_through_page(client, 'review', opened_pages, {'decision': 'publish'})
         assert (await called(client, 'ask_question', {'question': 'What did each status bring in?'}))[
             'state'
-        ] == 'shown'
+        ] == 'answered'
 
         orders.write_text('id,customer_id,state,amount_cents\n1,1,paid,1000\n', encoding='utf-8')
         asked = await called(client, 'ask_question', {'question': 'How many orders are there?'})
@@ -283,9 +272,8 @@ async def test_an_answer_is_shown_under_the_column_names_signature_gives(
         await called(client, 'add_data_files', {'paths': [str(data_files)]})
         await called(client, 'build', {'note': 'Amounts are cents.'})
         await called_through_page(client, 'review', opened_pages, {'decision': 'publish'})
-        await called(client, 'ask_question', {'question': 'What did each status bring in?'})
-    shown = handoff.take('What did each status bring in?') or ''
-    assert 'order status' in shown and 'amount brought in' in shown
+        asked = await called(client, 'ask_question', {'question': 'What did each status bring in?'})
+    assert asked['columns'] == ['order status', 'amount brought in']
 
 
 async def test_a_question_signature_cannot_prove_an_answer_to_is_told_with_why_and_nothing_runs(
@@ -296,5 +284,4 @@ async def test_a_question_signature_cannot_prove_an_answer_to_is_told_with_why_a
         await called(client, 'build', {'note': 'Amounts are cents.'})
         await called_through_page(client, 'review', opened_pages, {'decision': 'publish'})
         asked = await called(client, 'ask_question', {'question': 'Which customers are loyal?'})
-    assert asked['state'] == 'unproven'
-    assert 'refuted' in (handoff.take('Which customers are loyal?') or '')
+    assert asked['state'] == 'unproven' and 'refuted' in (asked['reason'] or '') and asked['rows'] == []

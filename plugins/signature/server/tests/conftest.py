@@ -120,7 +120,6 @@ def plugin_environment(
     monkeypatch.setenv('SIGNATURE_API_URL', address)
     monkeypatch.setenv('SIGNATURE_API_KEY', 'test-key')
     monkeypatch.setenv('SIGNATURE_DATA_DIR', str(tmp_path / 'plugin-data'))
-    monkeypatch.setattr('signature_plugin.handoff.FOLDER', tmp_path / 'answers')
     monkeypatch.setattr('signature_plugin.fake_backend.BUILD_SECONDS', 0.05)
     return signature
 
