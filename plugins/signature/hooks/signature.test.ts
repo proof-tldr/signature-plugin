@@ -48,14 +48,14 @@ async function columnsOf(ui: { findAll: (query: ElementQuery) => Promise<FoundEl
   }))
 }
 
-test('an answer is drawn as a table under readable headers, its numbers tidy and its rows in order', KEY, async ($, on) => {
+test('an answer is drawn as a table alone, under readable headers, its numbers tidy and its rows in order', KEY, async ($, on) => {
   const ui = await $.ui.mount(resultSite('ask_question', structured(ANSWER)))
   expect(await columnsOf(ui, 2)).toEqual([
     { text: 'BookDuneThe HobbitUlysses', alignItems: 'flex-start' },
     { text: 'Average rating4.54.331', alignItems: 'flex-end' },
   ])
-  expect(await ui.find({ type: 'Text', text: /^the set of rows, one per book B/ })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: /^✓ Proven by Signature · ran on your data · 3 rows/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /the set of rows/ })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: /^✓ Proven by Signature · ran on your data · 3 rows$/ })).toBeDefined()
 })
 
 test('an answer read from the text of the result is drawn as well', KEY, async ($, on) => {
@@ -157,7 +157,7 @@ test('Claude sees Signature’s tools from the start, not behind a search', KEY,
 test('Claude is told an answer is drawn already, so that it does not show it again', KEY, async ($, on) => {
   on('tool.call', () => ({ result: structured(ANSWER) }))
   const called = await $.tool.call({ tool: signatureTool('ask_question'), tool_use_id: 'call-1', question: ANSWER.question })
-  expect(called.context?.join('\n')).toContain('drawn this result for the customer')
+  expect(called.context?.join('\n')).toContain('writing nothing more about it')
 })
 
 test("Claude reads another tool's result as it is", KEY, async ($, on) => {

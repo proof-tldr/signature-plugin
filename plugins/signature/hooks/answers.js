@@ -1,11 +1,10 @@
-// An answer as the customer reads it: their question, how Signature read it, and the rows the proven query found on
-// their data, as a table with readable headers and tidy numbers. The transcript shows the first rows; the
-// /signature-answer pane shows every row and the full reading.
+// An answer as the customer reads it: the rows the proven query found on their data, as a table with readable
+// headers and tidy numbers. The transcript shows the first rows; the /signature-answer pane shows every row and how
+// Signature read the question.
 
 import { card, line, ACCENT, MARK, counted } from './cards.js'
 
 const INLINE_ROWS = 12
-const READING_LINES = 3
 // The widest a text cell is drawn, so that one long value cannot push the other columns off the screen.
 const CELL_WIDTH = 40
 
@@ -28,15 +27,12 @@ export function answerCard(elements, answer) {
 
 function answeredCard(elements, answer) {
   const { Box } = elements
-  const reading = readingLines(answer.reading)
   const shown = sortedRows(answer.rows).slice(0, INLINE_ROWS)
   const more = answer.row_count - shown.length
   return Box({
     flexDirection: 'column',
     children: [
-      ...reading.slice(0, READING_LINES).map((text) => line(elements, text)),
-      ...(reading.length > READING_LINES ? [line(elements, '…')] : []),
-      Box({ paddingLeft: 2, paddingY: 1, children: [answerBody(elements, answer, shown)] }),
+      Box({ paddingLeft: 2, paddingBottom: 1, children: [answerBody(elements, answer, shown)] }),
       line(elements, footer(answer, more)),
     ],
   })
@@ -59,10 +55,9 @@ function provenLine(answer) {
   return ['✓ Proven by Signature', 'ran on your data', ...(isSingleValue(answer) ? [] : [counted(answer.row_count, 'row')])].join(' · ')
 }
 
-/** The proven line under an answer in the transcript, pointing to the pane when the card leaves something out. */
+/** The proven line under an answer in the transcript, pointing to the pane when the card leaves rows out. */
 function footer(answer, more) {
-  const isCut = more > 0 || readingLines(answer.reading).length > READING_LINES
-  return provenLine(answer) + (isCut ? ' · /signature-answer for all of it' : '')
+  return provenLine(answer) + (more > 0 ? ` · /signature-answer for all ${answer.row_count}` : '')
 }
 
 /** The pane /signature-answer opens: the full reading, every row, and a button that copies them as CSV. */
@@ -101,12 +96,6 @@ export function csvOf(answer) {
 }
 
 // ---- reading, rows and cells ---------------------------------------------------------------------------------
-
-/** The reading's lines, without the bullets and blank lines signature-english sets it out with. */
-function readingLines(reading) {
-  if (!reading) return []
-  return reading.split('\n').map((text) => text.trimEnd()).filter((text) => text.trim() !== '')
-}
 
 /** The rows in a stable order a person can scan: by the first column, then the next. */
 function sortedRows(rows) {

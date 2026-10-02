@@ -8,7 +8,7 @@ import { resultCard, callLine } from './tools.js'
 
 const PANE = 'signature-answer'
 const DRAWN = "Signature has drawn this result for the customer under the call, which overrides the result's note: "
-  + 'do not show, restate or point to it. Reply with one sentence on what stands out, or what they can do next.'
+  + 'do not show, restate, point to or comment on it. End your reply here, writing nothing more about it.'
 // The last answer drawn, which /signature-answer opens in full.
 let lastAnswer = null
 

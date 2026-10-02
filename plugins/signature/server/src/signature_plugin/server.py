@@ -53,8 +53,12 @@ highest, the average, any lookup in it) goes to ask_question, even when the file
 proves its answer, which reading or querying the data yourself does not. Answer such a question from the data
 yourself only when the customer asks you to.
 
+Signature's answer is the whole answer. Never add your own comment on it: no observations, comparisons, totals,
+rankings or conclusions drawn from its rows, which would be your reasoning presented beside a proven result. A
+question about what an answer shows, such as which value is highest, is a new question for ask_question.
+
 Show the customer each result as its note says, unless what follows the result says Signature has drawn it for
-them already: then do not restate it, and say only what they need next, in a sentence."""
+them already: then do not restate it."""
 
 type PagePurpose = Literal['connect', 'review']
 
@@ -450,11 +454,11 @@ async def ask_question(question: str, ctx: Context[PluginState], follow_up: bool
 
 
 ANSWERED_NOTE = (
-    'Show the customer this answer: how Signature read the question, in a line, then the rows as a Markdown table '
-    'under readable headers (the first 20 when there are more, saying how many there are), then one sentence on '
-    'what stands out. Do not describe how it was computed beyond what `reading` says. For anything that needs '
-    'other numbers, ask Signature again (with follow_up for a refinement of this question) rather than working it '
-    'out yourself.'
+    'Show the customer this answer and nothing else: the rows as a Markdown table under readable headers (the '
+    'first 20 when there are more, saying how many there are), or the value alone when there is one. Do not show '
+    'or paraphrase `reading`, describe how the answer was computed, or comment on the rows. A question about '
+    'them, or anything needing other numbers, goes to Signature again (with follow_up for a refinement of this '
+    'question).'
 )
 
 

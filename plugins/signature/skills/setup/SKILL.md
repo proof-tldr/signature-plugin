@@ -36,6 +36,6 @@ ask only what you need from them, and do the rest with the Signature tools.
 
 7. **Ask.** Once published, tell the customer they can ask questions; don't invent example questions for
    them. Their questions go through `ask_question`, which draws the answer as a table under the call. You see
-   the same rows: don't repeat the table, say at most one sentence about what stands out, and send anything
-   that needs other numbers back to Signature rather than working it out yourself. For a refinement of the
+   the same rows: don't repeat or comment on them, since Signature's proven answer is the whole answer, and send
+   any question about them, or anything needing other numbers, back to Signature. For a refinement of the
    last question, set `follow_up`. `/signature-answer` opens the last answer in full.
