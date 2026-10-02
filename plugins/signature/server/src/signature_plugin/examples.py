@@ -10,7 +10,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from signature_local_data.local_data import LocalData
+from signature_local_data import LocalData
 
 from signature_plugin.sources import Source
 

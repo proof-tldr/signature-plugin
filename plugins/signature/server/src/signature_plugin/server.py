@@ -17,7 +17,7 @@ import anyio
 from mcp.server.mcpserver import Context, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp_types import ElicitRequest, ElicitRequestURLParams, ElicitResult, InputRequiredResult, ToolAnnotations
-from signature_local_data.local_data import LocalData, QueryRefused
+from signature_local_data import LocalData, QueryRefused
 
 from signature_plugin import handoff, presentation
 from signature_plugin.backend import (

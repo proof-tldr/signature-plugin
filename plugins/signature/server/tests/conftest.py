@@ -12,7 +12,7 @@ import keyring
 import pytest
 import uvicorn
 from keyring.backend import KeyringBackend
-from signature_local_data.local_data import LocalData
+from signature_local_data import LocalData
 
 from signature_plugin.fake_backend import FakeSignature
 from signature_plugin.sources import password_of

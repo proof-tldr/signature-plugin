@@ -1,7 +1,7 @@
 from pathlib import Path
 from typing import Any
 
-from signature_local_data.local_data import LocalData
+from signature_local_data import LocalData
 
 from signature_plugin.examples import examples_of
 from signature_plugin.sources import FileSource, Sources
