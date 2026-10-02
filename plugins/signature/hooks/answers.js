@@ -18,6 +18,8 @@ export function answerCard(elements, answer) {
     case 'unproven':
       // The reason is the checker's own words, for Claude; the customer is told what to do about it.
       return card(elements, "Signature couldn't prove an answer, so nothing ran", ['Asking it more simply, one part at a time, usually works.'], 'warning')
+    case 'drawn':
+      return card(elements, 'This answer is no longer kept', ['Ask the question again to see it.'])
     case 'stale':
       return card(elements, 'Your data changed shape since the domain was published', ['Build and publish it again to ask about it.'], 'warning')
     default:
