@@ -10,7 +10,7 @@ its SQL names tables that way."""
 import hashlib
 import json
 import threading
-from collections.abc import Generator, Sequence
+from collections.abc import Callable, Generator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -18,7 +18,7 @@ from typing import Any, TypedDict, cast
 
 import duckdb
 
-from signature_plugin.sources import DatabaseSource, FileFormat, FileSource, Source, SourceRefused, password_of
+from signature_local_data.sources import DatabaseSource, FileFormat, FileSource, Source, SourceRefused
 
 # Files are tables in this schema of DuckDB's own in-memory database; each database source is attached beside it.
 FILES_DATABASE = 'memory'
@@ -70,6 +70,15 @@ class Catalog(TypedDict):
 
 
 @dataclass(frozen=True)
+class DuckDbFolders:
+    """Where DuckDB keeps its extensions, its spill files and its home; None leaves DuckDB's default."""
+
+    extensions: Path | None = None
+    temp: Path | None = None
+    home: Path | None = None
+
+
+@dataclass(frozen=True)
 class TableSummary:
     name: str
     columns: int
@@ -78,9 +87,19 @@ class TableSummary:
 class LocalData:
     """The sources, opened together in one locked DuckDB that stays open between calls: each file is read into it
     once, and the whole DuckDB opened again only when the sources change or a file changes on disk. Calls are made
-    one at a time, as one DuckDB connection serves them all."""
+    one at a time, as one DuckDB connection serves them all.
 
-    def __init__(self) -> None:
+    A database's password is asked of `password_of` when the DuckDB is opened, and it raises SourceRefused if it
+    has none. Where DuckDB keeps its extensions, its spill files and its home are the caller's to set; left unset,
+    DuckDB's own defaults apply."""
+
+    def __init__(
+        self,
+        password_of: Callable[[DatabaseSource], str],
+        folders: DuckDbFolders = DuckDbFolders(),  # noqa: B008
+    ) -> None:
+        self._password_of = password_of
+        self._folders = folders
         self._lock = threading.Lock()
         self._open: _Open | None = None
 
@@ -126,7 +145,7 @@ class LocalData:
         with self._lock:
             if self._open is None or self._open.state != state:
                 self._closed()
-                self._open = _Open(state, _opened(sources))
+                self._open = _Open(state, _opened(sources, self._password_of, self._folders))
             yield self._open.connection
 
     def _closed(self) -> None:
@@ -176,13 +195,22 @@ def _ran(connection: duckdb.DuckDBPyConnection, sql: str) -> Result:
     return Result(columns=columns, rows=rows[:MAX_RESULT_ROWS], truncated=len(rows) > MAX_RESULT_ROWS)
 
 
-def _opened(sources: Sequence[Source]) -> duckdb.DuckDBPyConnection:
+def _opened(
+    sources: Sequence[Source], password_of: Callable[[DatabaseSource], str], folders: DuckDbFolders
+) -> duckdb.DuckDBPyConnection:
     """All the sources in one DuckDB, locked: no file but theirs can be read, and nothing written anywhere."""
     connection = duckdb.connect(':memory:')
     try:
+        for setting, folder in (
+            ('extension_directory', folders.extensions),
+            ('temp_directory', folders.temp),
+            ('home_directory', folders.home),
+        ):
+            if folder is not None:
+                connection.execute(f'SET {setting} = {_literal(str(folder))}')
         connection.execute(f'CREATE SCHEMA {FILES_SCHEMA}')
         for source in sources:
-            _attach(connection, source)
+            _attach(connection, source, password_of)
         allowed = [source.path for source in sources if isinstance(source, FileSource)]
         connection.execute('SET allowed_paths = ?', [allowed])
         connection.execute('SET enable_external_access = false')
@@ -193,7 +221,9 @@ def _opened(sources: Sequence[Source]) -> duckdb.DuckDBPyConnection:
     return connection
 
 
-def _attach(connection: duckdb.DuckDBPyConnection, source: Source) -> None:
+def _attach(
+    connection: duckdb.DuckDBPyConnection, source: Source, password_of: Callable[[DatabaseSource], str]
+) -> None:
     try:
         match source:
             case FileSource():
