@@ -127,7 +127,8 @@ test('/signature-answer opens the last answer with every row and copies it as CS
     plugin: 'signature', component: 'Pane', requestId: 'signature-answer', surface: 'terminal', viewport: VIEWPORT,
     props: { title: 'Signature answer', isFocused: true, bodyColumns: 80, placement: 'inline', scroll: { offset: 0, bodyRows: 20 }, view: {} },
   })
-  expect(await pane.find({ type: 'Text', text: /^Signature read it as: the set of rows/ })).toBeDefined()
+  expect((await columnsOf(pane, 2))[0]?.text).toBe('BookDuneThe HobbitUlysses')
+  expect(await pane.find({ type: 'Text', text: /the set of rows/ })).toBeUndefined()
   await pane.press({ key: 'copy-csv' })
   expect(copied[0]).toBe('book,average_rating\nUlysses,1\nThe Hobbit,4.333333333333333\nDune,4.5')
 })
@@ -181,6 +182,16 @@ test('Claude is told a status is drawn already, so that it does not show it agai
   on('tool.call', () => ({ result: structured({ domain: 'Bookshop', published: true, sources: [], open_questions: [] }) }))
   const called = await $.tool.call({ tool: signatureTool('get_status'), tool_use_id: 'call-3' })
   expect(called.context?.join('\n')).toContain('writing nothing more about it')
+})
+
+test('when there is no answer, Claude is told the reason is drawn, not that an answer was shown', KEY, async ($, on) => {
+  mock.store(on)
+  const unproven = { ...ANSWER, state: 'unproven', rows: [], columns: [], reading: null, reason: 'timeout' }
+  on('tool.call', () => ({ result: JSON.stringify(unproven) }))
+  const called = await $.tool.call({ tool: signatureTool('ask_question'), tool_use_id: 'call-4', question: ANSWER.question })
+  const context = called.context?.join('\n') ?? ''
+  expect(context).toContain('why it has no answer')
+  expect(context).not.toContain('drawn this result')
 })
 
 test('an answer no longer kept says so rather than drawing nothing', KEY, async ($, on) => {

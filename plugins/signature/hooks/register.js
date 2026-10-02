@@ -11,6 +11,8 @@ const PANE = 'signature-answer'
 const ASK = TOOL_PREFIX + 'ask_question'
 const DRAWN = "Signature has drawn this result for the customer under the call, which overrides the result's note: "
   + 'do not show, restate, point to or comment on it. End your reply here, writing nothing more about it.'
+const NO_ANSWER = 'Signature has drawn why it has no answer for the customer under the call, which overrides the '
+  + "result's note: do not restate it. Offer, in one sentence, to ask it again more simply."
 const WITHHELD = "Signature drew its proven answer for the customer under this call. Its rows are not given to you: "
   + 'do not show, restate, guess at or comment on the answer, and end your reply here. Never work it out from the '
   + 'data yourself or offer to, even if the customer says they cannot see it: tell them it is under the call. A '
@@ -65,7 +67,7 @@ export function register(on) {
   on('session.start', async ($, e, next) => {
     await $.command.register({
       name: 'signature-answer',
-      description: "Open Signature's last answer in full: how it read the question, every row, and a copy as CSV",
+      description: "Open Signature's last answer in full: every row, and a copy as CSV",
     })
     return next(e)
   })
@@ -82,7 +84,7 @@ export function register(on) {
     const called = await next(e)
     const answer = called.deny === undefined ? payloadOf(called.result) : null
     if (answer === null) return called
-    if (answer.state !== 'answered') return { ...called, context: [...(called.context ?? []), DRAWN] }
+    if (answer.state !== 'answered') return { ...called, context: [...(called.context ?? []), NO_ANSWER] }
     await keep($, e.tool_use_id, answer)
     return { ...called, result: outline(answer) }
   })

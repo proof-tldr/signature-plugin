@@ -1,6 +1,6 @@
 // An answer as the customer reads it: the rows the proven query found on their data, as a table with readable
-// headers and tidy numbers. The transcript shows the first rows; the /signature-answer pane shows every row and how
-// Signature read the question.
+// headers and tidy numbers. The transcript shows the first rows; the /signature-answer pane shows every row and
+// copies them as CSV.
 
 import { card, line, ACCENT, MARK, counted } from './cards.js'
 
@@ -62,7 +62,7 @@ function footer(answer, more) {
   return provenLine(answer) + (more > 0 ? ` · /signature-answer for all ${answer.row_count}` : '')
 }
 
-/** The pane /signature-answer opens: the full reading, every row, and a button that copies them as CSV. */
+/** The pane /signature-answer opens: the question, every row, and a button that copies them as CSV. */
 export function answerPane(elements, answer, copy) {
   const { Box, Text, Button } = elements
   const rows = sortedRows(answer.rows)
@@ -75,7 +75,6 @@ export function answerPane(elements, answer, copy) {
         columnGap: 1,
         children: [Text({ color: ACCENT, bold: true, children: [MARK] }), Text({ bold: true, wrap: 'wrap', children: [answer.question] })],
       }),
-      Text({ dimColor: true, wrap: 'wrap', children: [answer.reading ? `Signature read it as: ${answer.reading}` : ''] }),
       answerBody(elements, answer, rows),
       Text({ dimColor: true, children: [footerOfPane(answer)] }),
       Button({ key: 'copy-csv', label: 'Copy as CSV', hotkey: 'c', plain: true, onPress: copy }),
