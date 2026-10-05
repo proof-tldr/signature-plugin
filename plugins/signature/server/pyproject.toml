@@ -1,0 +1,51 @@
+[project]
+name = "signature-plugin"
+version = "0.5.20"
+description = "Signature's MCP server for Claude Code, run on the customer's machine."
+requires-python = ">=3.13"
+dependencies = [
+    "mcp==2.2.0",
+    "duckdb>=1.5.6,<2",
+    "keyring>=25.7,<26",
+    "platformdirs>=4.3,<5",
+]
+
+[project.scripts]
+signature-mcp = "signature_plugin.server:main"
+signature-fake-backend = "signature_plugin.fake_backend:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1,<10",
+    "ruff>=0.16,<1",
+    "pyright>=1.1.414",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.uv]
+python-preference = "only-managed"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-p anyio"
+
+[tool.ruff]
+line-length = 120
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF", "ASYNC", "PTH"]
+# Polling Signature until a build or query is ready is the protocol, not a missed event.
+ignore = ["ASYNC110"]
+
+[tool.ruff.format]
+quote-style = "single"
+
+[tool.pyright]
+include = ["src", "tests", "evals"]
+typeCheckingMode = "strict"
+reportMissingTypeStubs = false
+reportUnknownMemberType = false

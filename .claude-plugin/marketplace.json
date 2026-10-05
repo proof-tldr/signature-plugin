@@ -1,0 +1,14 @@
+{
+  "name": "signature",
+  "owner": {
+    "name": "Signature"
+  },
+  "plugins": [
+    {
+      "name": "signature",
+      "source": "./plugins/signature",
+      "description": "Build a Signature domain from your data and documents, and ask it questions answered by proven SQL run on your own machine."
+    }
+  ],
+  "description": "Signature for Claude Code."
+}

@@ -1,0 +1,10 @@
+__pycache__/
+.venv/
+.pytest_cache/
+.ruff_cache/
+node_modules/
+test-results/
+playwright-report/
+plugins/signature/server/evals/logs/
+plugins/signature/tsconfig.json
+plugins/signature/.claude-plugin/types/

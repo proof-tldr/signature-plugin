@@ -1,0 +1,160 @@
+/* The pages wear Signature's own look, as its web app has it: its light
+   Claude-palette primitives and shadcn role names, Geist throughout, hairline-edged cards on a warm page, pill
+   controls, and the ink itself as the primary colour. Only the roles these pages use are carried over. */
+@import 'tailwindcss';
+@import '@xyflow/react/dist/style.css' layer(base);
+@import '@fontsource-variable/geist';
+
+:root {
+  color-scheme: light;
+
+  /* Signature's light primitives. */
+  --bg: #f7f5ef;
+  --surface: #ffffff;
+  --well: #eeece5;
+  --well-hover: #e3e0d7;
+  --sunken: #ece9e0;
+  --strip: #f2efe7;
+  --ink: #141413;
+  --muted-ink: #5e5d57;
+  --faint-ink: #86847b;
+  --hairline: rgba(31, 30, 29, 0.14);
+  --hairline-strong: rgba(31, 30, 29, 0.26);
+  --positive: #1a7f37;
+  --positive-soft: #dafbe1;
+
+  /* Signature's roles over them. */
+  --background: var(--bg);
+  --foreground: var(--ink);
+  --card: var(--surface);
+  --primary: var(--foreground);
+  --primary-foreground: var(--background);
+  --primary-hover: color-mix(in oklab, var(--primary) 86%, var(--background));
+  --muted: var(--sunken);
+  --muted-foreground: var(--muted-ink);
+  --faint: var(--faint-ink);
+  --band: var(--strip);
+  --control: var(--well);
+  --control-hover: var(--well-hover);
+  --selected: color-mix(in oklab, var(--foreground) 7%, var(--card));
+  --border: var(--hairline);
+  --input: var(--hairline-strong);
+  --ring: color-mix(in oklab, var(--foreground) 72%, var(--background));
+  --success: var(--positive);
+  --success-soft: var(--positive-soft);
+  --destructive: #9b3f37;
+  --destructive-soft: #f7e7e4;
+
+  /* The quiet tones Signature marks each kind of record with, as a soft badge behind an icon. */
+  --type-soft: #e7ebe3;
+  --type-text: #343e32;
+  --fact-soft: #eee9dc;
+  --fact-text: #473c26;
+  --calc-soft: #ede5e4;
+  --calc-text: #453334;
+  --attr-soft: #e5eaee;
+  --attr-text: #313e49;
+}
+
+@theme inline {
+  --color-*: initial;
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary-hover: var(--primary-hover);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-faint: var(--faint);
+  --color-band: var(--band);
+  --color-control: var(--control);
+  --color-control-hover: var(--control-hover);
+  --color-selected: var(--selected);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-success: var(--success);
+  --color-success-soft: var(--success-soft);
+  --color-destructive: var(--destructive);
+  --color-destructive-soft: var(--destructive-soft);
+  --color-type-soft: var(--type-soft);
+  --color-type-text: var(--type-text);
+  --color-fact-soft: var(--fact-soft);
+  --color-fact-text: var(--fact-text);
+  --color-calc-soft: var(--calc-soft);
+  --color-calc-text: var(--calc-text);
+  --color-attr-soft: var(--attr-soft);
+  --color-attr-text: var(--attr-text);
+
+  --font-sans: 'Geist Variable', -apple-system, 'Segoe UI', system-ui, sans-serif;
+
+  /* Signature's compact heading ramp and reading size. */
+  --text-heading-sm: 1.0625rem;
+  --text-heading-sm--line-height: 1.375rem;
+  --text-heading-sm--font-weight: 600;
+  --text-heading-sm--letter-spacing: -0.015em;
+  --text-heading-lg: 1.375rem;
+  --text-heading-lg--line-height: 1.75rem;
+  --text-heading-lg--font-weight: 600;
+  --text-heading-lg--letter-spacing: -0.025em;
+  --text-heading-2xl: 1.875rem;
+  --text-heading-2xl--line-height: 2.25rem;
+  --text-heading-2xl--font-weight: 600;
+  --text-heading-2xl--letter-spacing: -0.035em;
+  --text-body-reading: 0.9375rem;
+  --text-body-reading--line-height: 1.5rem;
+  --text-2xs: 0.6875rem;
+  --text-2xs--line-height: 1rem;
+
+  --radius-surface: 0.5rem;
+  --radius-row: 0.375rem;
+  --shadow-low: 0 1px 2px rgb(15 23 42 / 5%);
+  --shadow-raised: 0 1px 2px rgb(15 23 42 / 4%), 0 10px 24px -14px rgb(15 23 42 / 18%);
+  --shadow-overlay: 0 2px 4px rgb(15 23 42 / 5%), 0 18px 48px -16px rgb(15 23 42 / 24%);
+}
+
+@utility focus-ring {
+  &:focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
+}
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+  body {
+    background: var(--background);
+    color: var(--foreground);
+    font-family: var(--font-sans);
+    font-size: 0.875rem;
+    line-height: 1.25rem;
+    -webkit-font-smoothing: antialiased;
+    touch-action: manipulation;
+  }
+}
+
+/* The diagram is read, not edited: React Flow's defaults take the page's ink and hairlines. */
+.react-flow {
+  --xy-background-color: var(--band);
+  --xy-edge-stroke-default: var(--faint);
+  --xy-edge-stroke-width-default: 1.25;
+}
+.react-flow__node {
+  cursor: default;
+}
+.react-flow__handle {
+  opacity: 0;
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition: none !important;
+    animation: none !important;
+  }
+}

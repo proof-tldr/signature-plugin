@@ -1,0 +1,144 @@
+import os
+from pathlib import Path
+
+import pytest
+
+from signature_plugin.local_data import LocalData, QueryRefused
+from signature_plugin.sources import FileSource, SourceRefused, Sources
+
+
+@pytest.fixture
+def sources(tmp_path: Path, data_files: Path) -> list[FileSource]:
+    registry = Sources(tmp_path / 'domain')
+    return registry.add_files([str(data_files)])
+
+
+def test_a_folder_adds_each_data_file_in_it(sources: list[FileSource]) -> None:
+    assert sorted((source.name, source.format) for source in sources) == [
+        ('customers', 'parquet'),
+        ('orders', 'csv'),
+        ('products', 'xlsx'),
+    ]
+
+
+def test_adding_the_same_file_again_adds_nothing(tmp_path: Path, data_files: Path) -> None:
+    registry = Sources(tmp_path / 'domain')
+    registry.add_files([str(data_files / 'orders.csv')])
+    assert registry.add_files([str(data_files / 'orders.csv')]) == []
+    assert len(registry.all()) == 1
+
+
+def test_a_file_that_is_not_data_is_refused(tmp_path: Path) -> None:
+    notes = tmp_path / 'notes.md'
+    notes.write_text('hello', encoding='utf-8')
+    with pytest.raises(SourceRefused, match='not a CSV'):
+        Sources(tmp_path / 'domain').add_files([str(notes)])
+
+
+def test_one_catalog_describes_every_source_by_its_duckdb_name_and_no_values(
+    local: LocalData, sources: list[FileSource]
+) -> None:
+    catalog = local.catalog(sources)
+
+    names = {(table['catalog'], table['schema'], table['name']) for table in catalog['tables']}
+    assert names == {('memory', 'files', 'orders'), ('memory', 'files', 'customers'), ('memory', 'files', 'products')}
+    orders = next(table for table in catalog['tables'] if table['name'] == 'orders')
+    assert {'name': 'status', 'nativeType': 'VARCHAR', 'nullable': True} in orders['columns']
+    assert 'paid' not in str(catalog)
+    assert local.run(sources, 'SELECT count(*) FROM "memory"."files"."orders"').rows == [(3,)]
+
+
+def test_the_fingerprint_follows_the_structure_not_the_rows(local: LocalData, tmp_path: Path, data_files: Path) -> None:
+    orders = data_files / 'orders.csv'
+    sources = Sources(tmp_path / 'domain').add_files([str(orders)])
+    before = local.fingerprint(sources)
+
+    orders.write_text(orders.read_text(encoding='utf-8') + '4,2,paid,900\n', encoding='utf-8')
+    assert local.fingerprint(sources) == before
+
+    orders.write_text('id,customer_id,state,amount_cents\n1,1,paid,1000\n', encoding='utf-8')
+    assert local.fingerprint(sources) != before
+
+
+def test_every_format_can_be_queried(local: LocalData, sources: list[FileSource]) -> None:
+    for source in sources:
+        assert local.run(sources, f'SELECT * FROM files."{source.name}"').rows
+
+
+def test_a_select_runs(local: LocalData, sources: list[FileSource]) -> None:
+    result = local.run(
+        sources,
+        'SELECT c.name, SUM(o.amount_cents) FROM files.orders o JOIN files.customers c '
+        'ON c.id = o.customer_id GROUP BY 1 ORDER BY 1',
+    )
+    assert result.rows == [('Acme', 1500), ('Globex', 700)]
+
+
+def test_each_row_of_a_file_has_its_own_rowid(local: LocalData, sources: list[FileSource]) -> None:
+    """Signature keys a file's rows by their rowid, as a file has no key."""
+    result = local.run(sources, 'SELECT count(DISTINCT rowid), count(*) FROM memory.files.orders')
+    assert result.rows == [(3, 3)]
+
+
+@pytest.mark.parametrize(
+    ('sql', 'reason'),
+    [
+        ("SELECT * FROM read_csv('/etc/hosts')", 'table function'),
+        ('SELECT 1; SELECT 2', 'one SELECT'),
+        ('DELETE FROM files.orders', 'one SELECT'),
+        ("COPY (SELECT 1) TO '/tmp/out.csv'", 'one SELECT'),
+        ("ATTACH 'other.db'", 'one SELECT'),
+        ('SELECT * FROM nowhere', 'failed on your data'),
+    ],
+)
+def test_anything_but_a_select_over_the_sources_is_refused(
+    local: LocalData, sources: list[FileSource], sql: str, reason: str
+) -> None:
+    with pytest.raises(QueryRefused, match=reason):
+        local.run(sources, sql)
+
+
+def test_a_scalar_function_cannot_read_files_outside_the_sources(local: LocalData, sources: list[FileSource]) -> None:
+    with pytest.raises(QueryRefused):
+        local.run(sources, "SELECT content FROM read_text('/etc/hosts')")
+    with pytest.raises(QueryRefused):
+        local.run(sources, "SELECT getenv('HOME')")
+
+
+def test_a_missing_file_is_refused_when_opened(local: LocalData, tmp_path: Path, data_files: Path) -> None:
+    registry = Sources(tmp_path / 'domain')
+    [orders] = registry.add_files([str(data_files / 'orders.csv')])
+    (data_files / 'orders.csv').unlink()
+    with pytest.raises(SourceRefused, match='could not be opened'):
+        local.check([orders], orders)
+
+
+def test_a_file_unchanged_on_disk_is_read_once(local: LocalData, sources: list[FileSource], data_files: Path) -> None:
+    """Rewritten in place with its size and time kept, the file is not read again: the rows are the first read's."""
+    orders = data_files / 'orders.csv'
+    count = 'SELECT count(*) FROM files.orders'
+    assert local.run(sources, count).rows == [(3,)]
+    kept = orders.stat()
+    orders.write_text(orders.read_text(encoding='utf-8').replace('3,2,paid', '3,2,paix'), encoding='utf-8')
+    os.utime(orders, ns=(kept.st_atime_ns, kept.st_mtime_ns))
+    assert local.run(sources, "SELECT count(*) FROM files.orders WHERE status = 'paid'").rows == [(2,)]
+
+
+def test_a_file_changed_on_disk_is_read_again(local: LocalData, sources: list[FileSource], data_files: Path) -> None:
+    orders = data_files / 'orders.csv'
+    assert local.run(sources, 'SELECT count(*) FROM files.orders').rows == [(3,)]
+    orders.write_text(orders.read_text(encoding='utf-8') + '4,2,paid,900\n', encoding='utf-8')
+    assert local.run(sources, 'SELECT count(*) FROM files.orders').rows == [(4,)]
+
+
+def test_a_query_spills_only_into_a_folder_of_its_own_and_only_so_much(
+    local: LocalData, sources: list[FileSource]
+) -> None:
+    spilled = local.run(
+        sources, "SELECT current_setting('temp_directory'), current_setting('max_temp_directory_size')"
+    ).rows[0]
+    folder = Path(spilled[0])
+    assert folder.is_dir() and folder != Path.cwd() and spilled[1] == '8.0 GiB'
+
+    local.close()
+    assert not folder.exists()
